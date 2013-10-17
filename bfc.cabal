@@ -1,0 +1,28 @@
+Name:                bfc
+Version:             0.1
+Synopsis:            BFC
+License:             BSD3
+License-file:        LICENSE
+Author:              Marko Bencun
+Maintainer:          mbencun@gmail.com
+Category:            Application
+Build-type:          Simple
+Cabal-version:       >=1.2
+
+
+Executable bfc
+  Main-is:             Main.hs
+  Build-depends:       base,
+                       bytestring,
+                       MissingH,
+                       containers,
+                       unordered-containers,
+                       parsec,
+                       attoparsec,
+                       lens,
+                       tardis,
+                       mtl,
+                       transformers,
+                       hashable,
+                       digits
+  Ghc-options:         -O2 -Wall -rtsopts -fforce-recomp
