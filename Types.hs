@@ -20,10 +20,9 @@ instance Hashable PositionRef where
   hashWithSalt salt (PositionRef pos) = salt `hashWithSalt` pos
 
 -- This type is used to reference an unknown but unique position on the tape with an offset.
-data PositionRefOffset = PositionRefOffset {
-  _position :: PositionRef,
-  _offset :: Int
-  } deriving (Show, Eq)
+data PositionRefOffset = PositionRefOffset { _position :: PositionRef
+                                           , _offset :: Int
+                                           } deriving (Show, Eq)
 
 infixl 6 +:
 (+:) :: PositionRefOffset -> Int -> PositionRefOffset
