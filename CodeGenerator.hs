@@ -347,7 +347,7 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
       pos <- mallocBool
       convertToBool expr pos
       tmp <- mallocT Nothing 1
-      loopByte pos $ (atPos tmp inc) >> erase pos
+      loopByte pos $ atPos tmp inc >> erase pos
       atPos pos $ inc
       loopByte tmp $ atPos tmp dec >> atPos pos dec
       return $ Just pos
@@ -379,7 +379,7 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
         atPos tmp0 inc
         atPos pos2 dec
       loopByte tmp0 $ atPos pos2 inc >> atPos tmp0 dec
-      loopByte tmp1 $ atPos pos1 (write "[-]-") >> erase tmp1
+      loopByte tmp1 $ (erase pos1 >> atPos pos1 dec >> erase tmp1)
       return $ Just pos1
     evalExpression (AInfixOp OpEq (AExpression left) (AExpression right)) = do
       (Just pos1) <- evalExpression left
@@ -637,7 +637,7 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
         addByteShort Nothing (pos +: i) byte
     -- addByteShort writes the byte `b` at position `pos` in a more clever way than just replicating `b` pluses.
     -- It outputs code of the form "a[>d<c]" where a, d, c are the optimal number of pluses or minuses to produce the byte `b`.
-    --addByteShort _ pos b = let b' = if b < 0 then 256+b else b in atPos pos $ addByte b'
+    -- addByteShort _ pos b = let b' = if b < 0 then 256+b else b in atPos pos $ addByte b'
     addByteShort tmpPos pos byte = do
       let b' = if byte < 0 then 256 + byte else byte -- subtract b by adding (256-b)
       params <- use shortByteParams
