@@ -8,6 +8,7 @@ import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size
 
 import Prelude hiding(foldr, (.))
 
+import ShortBytes(ShortByteParams)
 import Parser(AST(..), Op(..), parseString)
 import Data.Word(Word8)
 import Data.Digits(digits)
@@ -31,14 +32,15 @@ import qualified Data.HashMap.Strict as Map
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 
+import qualified Data.Array as Array
+
+
 import Data.Foldable(foldr)
 
 data Type = TInteger
           | TString
           | TBool
           | TArray Int
-            deriving (Show, Eq)
-
 
 -- type Knot = RWST Allocation (S.Seq IR) ()
 -- tie :: Knot Identity t -> t
@@ -51,7 +53,7 @@ tie knot = evalTardis (knot <* (getPast >>= sendPast . findAllocation)) (Map.emp
 
 data MemInfo = MemInfo { _memType :: Maybe Type
                        , _memSize :: Size
-                       } deriving Show
+                       }
 
 type DefMap = Map.HashMap String AST
 type VarMap = Map.HashMap String PositionRef
@@ -61,19 +63,22 @@ data EvalState = EvalState { _varMap :: VarMap
                            , _memMap :: MemMap
                            , _memPos :: PositionRef
                            , _defMap :: DefMap
-                           } deriving Show
+                           , _shortByteParams :: Array.Array Int ShortByteParams
+                           }
 
 makeLenses ''EvalState
 makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
-initialEvalState :: EvalState
-initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty
 
-compile :: AST -> BS.ByteString
-compile = tie . execWriterT . flip evalStateT initialEvalState . evalAST
+compile :: [ShortByteParams] -> AST -> BS.ByteString
+compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState . evalAST
   where
+    initialEvalState :: EvalState
+    initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
+      where shortByteParamsArray = Array.array (0,255) $ zip [0..] shortByteParams'
+
     skip = return ()
 
     evalAST :: AST -> StateT EvalState (WriterT (BS.ByteString) Knot) ()
@@ -85,12 +90,10 @@ compile = tie . execWriterT . flip evalStateT initialEvalState . evalAST
       atPos pos $ do write $ BC.concat $ replicate size ".>"
                      move (-size)
     evalAST (APrint (AExpression (AString s))) = do
-      pos <- malloc 1
+      pos <- mallocByte
       let bytes = map ord s
-      atPos pos $ forM_ (zipWith (-) bytes (0:bytes)) $ \byte -> write' byte >> write "."
-      where write' b = if b < 0
-                       then write $ BC.replicate (-b) '-'
-                       else write $ BC.replicate b '+'
+      tmp <- mallocByte
+      forM_ (zipWith (-) bytes (0:bytes)) $ \byte -> addByteShort (Just tmp) pos byte >> (atPos pos $ write ".")
     evalAST (APrint (AExpression expr)) = do
       (Just pos) <- evalExpression expr
       size <- getSize pos
@@ -143,8 +146,8 @@ compile = tie . execWriterT . flip evalStateT initialEvalState . evalAST
       let encoded = encodeInteger i
           size' = fromIntegral size
           size'' = length encoded
-      pos <- mallocT (Just TInteger) size'
       assert (size'' <= size') skip
+      pos <- mallocT (Just TInteger) size'
       atPos (pos +: (size'-size'')) $ do forM_ encoded $ \byte -> addByte byte >> move 1
                                          move (-size'')
       return $ Just pos
@@ -201,11 +204,8 @@ compile = tie . execWriterT . flip evalStateT initialEvalState . evalAST
     evalExpression (AString s) = do
       let size = length s
       pos <- mallocT (Just TString) size
-      atPos pos writeString
+      addBytesShort pos (map ord s)
       return $ Just pos
-        where writeString = do forM_ (map ord s) $ \byte -> addByte byte >> move 1
-                               move (-length s)
-
     evalExpression (ASliceOp (AExpression expr) (AExpression (AInteger index'))) = do
       (Just pos) <- evalExpression expr
       (Just t) <- getType pos
@@ -256,8 +256,7 @@ compile = tie . execWriterT . flip evalStateT initialEvalState . evalAST
       let encoded = encodeInteger i
           size = length encoded
       pos <- mallocT (Just TInteger) size
-      atPos pos $ do forM_ encoded $ \byte -> addByte byte >> move 1
-                     move (-size)
+      addBytesShort pos encoded
       return $ Just pos
 
     evalExpression (ABool b) = do
@@ -627,3 +626,33 @@ compile = tie . execWriterT . flip evalStateT initialEvalState . evalAST
     getPos' posRef = do ~(Just p) <- lift . lift $ getsFuture $ Map.lookup posRef
                         return p
     tellTapeAccess access = lift . lift $ modifyForwards (S.|> access)
+
+    addBytesShort pos bytes = forM_ (zip [0..] bytes) $ \(i, byte) ->
+      if i < length bytes - 1
+      then
+        -- use unused part of allocated memory as temporary space
+        addByteShort (Just $ pos +: (i+1)) (pos +: i) byte 
+      else
+        -- Nothing => let function allocate a new temporary byte
+        addByteShort Nothing (pos +: i) byte
+    -- addByteShort writes the byte `b` at position `pos` in a more clever way than just replicating `b` pluses.
+    -- It outputs code of the form "a[>d<c]" where a, d, c are the optimal number of pluses or minuses to produce the byte `b`.
+    --addByteShort _ pos b = let b' = if b < 0 then 256+b else b in atPos pos $ addByte b'
+    addByteShort tmpPos pos b = do
+      let b' = if b < 0 then 256 + b else b -- subtract b by adding (256-b)
+      params <- use shortByteParams
+      let (a', loopIterations, c', d') = params Array.! fromIntegral b'
+      if loopIterations == 1
+      then atPos pos $ writeByteShort d' -- do not output looping code if there is only one iteration
+      else do { -- write (BC.pack (show (a',loopIterations, c', d', b')))
+              ; tmp <- maybe mallocByte return tmpPos
+              ; -- tmpPos needs to be zero at the beginning, will be zero at the end.
+              ; atPos tmp $ writeByteShort a'
+              ; loopByte tmp $ do { atPos pos $ writeByteShort d'
+                                  ; atPos tmp $ writeByteShort c'
+                                  }
+              }
+      where
+        writeByteShort b = if b < 128
+                           then write $ BC.replicate (fromIntegral b) '+'
+                           else write $ BC.replicate (fromIntegral (256-b)) '-' 

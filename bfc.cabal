@@ -22,7 +22,10 @@ Executable bfc
                        lens,
                        tardis,
                        mtl,
-                       transformers,
                        hashable,
-                       digits
+                       digits,
+                       arithmoi,
+                       binary,
+                       directory,
+                       array
   Ghc-options:         -O2 -Wall -rtsopts -fforce-recomp

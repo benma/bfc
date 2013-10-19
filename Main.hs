@@ -10,6 +10,8 @@ import Control.Applicative((<$>), (<|>), (<*), (*>))
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
+
+import ShortBytes(getCachedShortByteParams)
   
 
 -- remove all balanced <> and >< and -+ and +-
@@ -31,7 +33,9 @@ optimizeOutput = (parse'
 --    skipTrailing = A.many1 (A.choice $ map AC.char "<>+-") >> A.endOfInput >> return ""
     
 main :: IO ()
-main = (optimizeOutput . compile . parseString) <$> getContents >>= BC.putStrLn
+main = do
+  shortByteParams <- getCachedShortByteParams
+  (optimizeOutput . compile shortByteParams . parseString) <$> getContents >>= BC.putStrLn
 
 -- main :: IO ()
 -- main = (show . parseString) <$> getContents >>= putStrLn
