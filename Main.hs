@@ -27,6 +27,7 @@ optimizeOutput = (parse'
   where
     parse' p = either (error . show) id . A.parseOnly p 
     skipNested = A.try $ A.choice $ map balanced [('<','>'),('>','<'),('+','-'),('-','+')]
+    --balanced ('<','>') = between (AC.char '<') (AC.char '>') $ A.option "" $ A.many1 skipNested >> return ""
     balanced (a,b) = between (AC.char a) (AC.char b) $ A.option "" skipNested
     between left right f = left *> f <* right
                        -- all code after last '.' or ',' is irrelevant
@@ -34,6 +35,7 @@ optimizeOutput = (parse'
     
 main :: IO ()
 main = do
+  -- print $ optimizeOutput "<<><>>"
   shortByteParams <- getCachedShortByteParams
   (optimizeOutput . compile shortByteParams . parseString) <$> getContents >>= BC.putStrLn
 

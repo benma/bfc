@@ -22,11 +22,12 @@ instance Hashable PositionRef where
 -- This type is used to reference an unknown but unique position on the tape with an offset.
 data PositionRefOffset = PositionRefOffset { _position :: PositionRef
                                            , _offset :: Int
+                                           , _size :: Size
                                            } deriving (Show, Eq)
 
 infixl 6 +:
 (+:) :: PositionRefOffset -> Int -> PositionRefOffset
-(PositionRefOffset pos offset) +: offset' = PositionRefOffset pos (offset + offset')
+(PositionRefOffset pos offset size) +: offset' = PositionRefOffset pos (offset + offset') size
 
 type Size = Int
 

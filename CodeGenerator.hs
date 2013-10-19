@@ -4,7 +4,7 @@
 module CodeGenerator (compile) where
 
 import TapeAllocation(TapeAccessSequence(..), findAllocation, Allocation)
-import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size)
+import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position)
 
 import Prelude hiding(foldr, (.))
 
@@ -28,6 +28,7 @@ import Data.String.Utils(replace)
 
 import qualified Data.Sequence as S
 import qualified Data.HashMap.Strict as Map
+import qualified Data.HashSet as Set
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -35,28 +36,19 @@ import qualified Data.ByteString.Char8 as BC
 import qualified Data.Array as Array
 
 
-import Data.Foldable(foldr)
+import qualified Data.Foldable as F
 
 data Type = TInteger
           | TString
           | TBool
           | TArray Int
 
--- type Knot = RWST Allocation (S.Seq IR) ()
--- tie :: Knot Identity t -> t
--- tie knot = let (a, k) = runIdentity $ evalRWST knot (findAllocation k) ()
---            in a
-
-type Knot = Tardis (Allocation PositionRef) (S.Seq (TapeAccessSequence PositionRef))
-tie :: Knot a -> a
-tie knot = evalTardis (knot <* (getPast >>= sendPast . findAllocation)) (Map.empty, S.empty)
-
 data MemInfo = MemInfo { _memType :: Maybe Type
                        , _memSize :: Size
                        }
 
 type DefMap = Map.HashMap String AST
-type VarMap = Map.HashMap String PositionRef
+type VarMap = Map.HashMap String PositionRefOffset
 type MemMap = Map.HashMap PositionRef MemInfo
 
 data EvalState = EvalState { _varMap :: VarMap
@@ -71,9 +63,55 @@ makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
+data Pass1 = Erase PositionRefOffset
+           | Write BS.ByteString
+           | Pass1StartLoop PositionRefOffset
+           | Pass1EndLoop PositionRefOffset
+           | Pass1AtPosStart PositionRefOffset
+           | Pass1AtPosEnd PositionRefOffset
+
+getTapeAccess :: S.Seq Pass1 -> S.Seq (TapeAccessSequence PositionRef)
+getTapeAccess l = F.foldl' (\a b -> a <> go b) mempty l
+  where
+    go (Pass1AtPosStart (PositionRefOffset pos' _ size)) = S.singleton $ Access pos' size
+    go (Erase (PositionRefOffset pos' _ size)) = S.singleton $ Access pos' size
+    go (Pass1StartLoop _) = S.singleton StartLoop
+    go (Pass1EndLoop _) = S.singleton EndLoop
+    go _ = S.empty
+
+data Pass1State = Pass1State { _occupied :: Set.HashSet Position
+                             }
+makeLenses ''Pass1State
+
+compilePass1 :: S.Seq Pass1 -> BS.ByteString
+compilePass1 l = execWriter . flip evalStateT initialState $ F.for_ l eval
+  where
+    initialState = Pass1State Set.empty
+    eval (Write s) = write s
+    eval (Erase p) = do
+      let pos = getPos p
+      isOccupied <- uses occupied (Set.member pos)
+      when isOccupied $ do
+        atPos p $ write "[-]"
+        occupied %= Set.delete pos
+    eval (Pass1AtPosStart pos@(PositionRefOffset _ offset size)) = do
+      let p = getPos pos
+      if offset == 0
+        then forM_ [0..size] $ \i -> occupied %= Set.insert ((getPos pos) + i)
+        else occupied %= Set.insert p
+      move p
+    eval (Pass1AtPosEnd pos) = move (- getPos pos)
+    eval _ = write ""
+    atPos pos s = let p' = getPos pos in move p' >> s >> move (-p')
+    move pos = if pos < 0
+               then write $ BC.replicate (-pos) '<'
+               else write $ BC.replicate pos '>'
+    allocation = findAllocation $ getTapeAccess l
+    getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + offset
+    write = lift . tell
 
 compile :: [ShortByteParams] -> AST -> BS.ByteString
-compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState . evalAST
+compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEvalState . evalAST
   where
     initialEvalState :: EvalState
     initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
@@ -81,7 +119,7 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
 
     skip = return ()
 
-    evalAST :: AST -> StateT EvalState (WriterT (BS.ByteString) Knot) ()
+    evalAST :: AST -> StateT EvalState (Writer (S.Seq Pass1)) ()
     evalAST (AProgram is) = mapM_ evalAST is
     evalAST (AExpression expr) = evalExpression expr >> skip
     evalAST (APrint (AExpression (AVariable varName))) = do
@@ -107,10 +145,10 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
       cond <- mallocBool
       convertToBool expr cond
       loopByte cond $ do
-        tellTapeAccess StartLoop
+        --tell' $ Pass1StartLoop cond
         forM_ is evalAST
         convertToBool expr cond
-        tellTapeAccess EndLoop
+        --tell' $ Pass1EndLoop cond
     evalAST ast@(ADef defName _ _) = do
       defMap %= Map.insert defName (replaceVars ast)
         where replaceVars = transform (\ast' -> case ast' of 
@@ -165,9 +203,9 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
         evalDefAST [AExpression expr] = evalExpression expr
         evalDefAST (ins:inss) = evalAST ins >> evalDefAST inss
     evalExpression (AInfixOp OpAssignment (AExpression (APosRef refPos')) (AExpression expr)) = do
-      let refPos = PositionRefOffset refPos' 0
+      refSize <- getSize' refPos'
+      let refPos = PositionRefOffset refPos' 0 refSize
       (Just pos) <- evalExpression expr
-      refSize <- getSize refPos
       size <- getSize pos
        -- once a ref is defined, it needs to stay the same size
       assert (size == refSize) skip
@@ -194,9 +232,9 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
     evalExpression (AVariable varName) = do
       evalExpression =<< (APosRef . _position) <$> getPos varName
     evalExpression (APosRef p') = do
-      let p = PositionRefOffset p' 0
+      size <- getSize' p'
+      let p = PositionRefOffset p' 0 size
       t <- getType p
-      size <- getSize p
       pos <- mallocT t size
       writeCopy' size p pos
       return $ Just pos
@@ -268,8 +306,8 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
       pos <- getPos varName
       evalExpression $ AInfixOp OpPlusEq (AExpression (APosRef $ _position pos)) expr
     evalExpression (AInfixOp OpPlusEq (AExpression (APosRef varPos')) (AExpression expr)) = do
-      let varPos = PositionRefOffset varPos' 0
-      varSize <- getSize varPos
+      varSize <- getSize' varPos'
+      let varPos = PositionRefOffset varPos' 0 varSize
       (Just exprPos) <- evalExpression expr
       (Just varType) <- getType varPos
       (Just exprType) <- getType exprPos
@@ -307,16 +345,16 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
           ret <- mallocT (Just TInteger) newSize
           assert (_offset pos1 == 0 && _offset pos2 == 0 && _offset ret == 0) skip
           -- hack
-          evalAST $ parseString $ foldr (uncurry replace) "while(${_l}) { ${_ret} += ${_r} ${_l}-- }" $ [("_l", show $ _position' $ _position pos1), ("_r", show $ _position' $ _position pos2), ("_ret", show $ _position' $ _position ret)]
+          evalAST $ parseString $ F.foldr (uncurry replace) "while(${_l}) { ${_ret} += ${_r} ${_l}-- }" $ [("_l", show $ _position' $ _position pos1), ("_r", show $ _position' $ _position pos2), ("_ret", show $ _position' $ _position ret)]
           return $ Just ret
         _ -> error "not supported"
     evalExpression (APostfixOp OpDec (AExpression (AVariable varName))) = do
       pos <- getPos varName
       evalExpression (APostfixOp OpDec (AExpression (APosRef $ _position pos)))
     evalExpression (APostfixOp OpDec (AExpression (APosRef pos'))) = do
-      let pos = PositionRefOffset pos' 0
+      s <- getSize' pos'
+      let pos = PositionRefOffset pos' 0 s
       (Just t) <- getType pos
-      s <- getSize pos
       case t of
         TInteger -> do
           let handle i = if i /= 0
@@ -331,9 +369,9 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
       pos <- getPos varName
       evalExpression (APostfixOp OpInc (AExpression (APosRef $ _position pos)))
     evalExpression (APostfixOp OpInc (AExpression (APosRef pos'))) = do
-      let pos = PositionRefOffset pos' 0
+      s <- getSize' pos'
+      let pos = PositionRefOffset pos' 0 s
       (Just t) <- getType pos
-      s <- getSize pos
       case t of
         TInteger -> do
           let handle i = if i /= 0
@@ -472,13 +510,22 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
     convertToBool expr dstPos = do
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
-    write = lift . tell
-    atPos (PositionRefOffset pos' offset') f = do
-      size <- getSize (PositionRefOffset pos' 0)
-      tellTapeAccess $ Access pos' size
-      p <- getPos' pos'
-      move (p + offset') >> f >> move (-p - offset')
-    loopByte pos f = (atPos pos $ write "[") >> f >> (atPos pos $ write "]")
+    write = tell' . Write
+    atPos pos@(PositionRefOffset pos' offset' size) f = do
+      tell' $ Pass1AtPosStart pos
+      f
+      tell' $ Pass1AtPosEnd pos
+      -- size <- getSize (PositionRefOffset pos' 0)
+      -- tellTapeAccess $ Access pos' size
+      -- tell' $ Pass1Access pos' size
+      -- p <- getPos' pos'
+      -- move (p + offset') >> f >> move (-p - offset')
+    loopByte pos f = do
+      atPos pos $ write "["
+      tell' $ Pass1StartLoop pos
+      f
+      tell' $ Pass1EndLoop pos
+      atPos pos $ write "]"
     move pos = write $ if pos < 0
                        then BC.replicate (-pos) '<'
                        else BC.replicate pos '>'
@@ -486,7 +533,9 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
-    erase b = atPos b $ writeByte (0::Word8)
+    erase pos@(PositionRefOffset pos' offset' size) = do
+      tell' $ Erase pos
+      --atPos pos $ writeByte (0::Word8)
     resize alignment pos newSize = do
       oldSize <- getSize pos
       type_ <- getType pos
@@ -607,25 +656,23 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
     uniquePos oldPos = makePositionRef (_position' oldPos + 1)
     mallocT type_ size = do
       pos' <- use memPos
-      let pos = PositionRefOffset pos' 0
+      let pos = PositionRefOffset pos' 0 size
       memPos .= uniquePos pos'
       memMap %= Map.insert pos' (MemInfo type_ size)
       forM_ [0..size-1] $ \i -> erase (pos +: i)
       return pos
-    defineV varName (PositionRefOffset pos 0) = varMap %= Map.insert varName pos
+    defineV varName pos@(PositionRefOffset _ 0 _) = varMap %= Map.insert varName pos
     defineV _ _ = undefined
     undefineV varName = varMap %= Map.delete varName
     malloc = mallocT Nothing
     mallocByte = malloc 1
     mallocBool = mallocT (Just TBool) 1
-    getSize (PositionRefOffset pos 0) = uses memMap (^?! ix pos . memSize)
+    getSize (PositionRefOffset pos 0 size) = return size
     getSize _ = undefined
-    getType (PositionRefOffset pos 0) = uses memMap (^?! ix pos . memType)
+    getSize' pos = uses memMap (^?! ix pos . memSize)
+    getType (PositionRefOffset pos 0 _) = uses memMap (^?! ix pos . memType)
     getType _ = undefined
-    getPos varName = uses varMap $ \m -> PositionRefOffset (m ^?! ix varName) 0
-    getPos' posRef = do ~(Just p) <- lift . lift $ getsFuture $ Map.lookup posRef
-                        return p
-    tellTapeAccess access = lift . lift $ modifyForwards (S.|> access)
+    getPos varName = uses varMap (^?! ix varName)
 
     addBytesShort pos bytes = forM_ (zip [0..] bytes) $ \(i, byte) ->
       if i < length bytes - 1
@@ -656,3 +703,4 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
         writeByteShort b = if b < 128
                            then write $ BC.replicate (fromIntegral b) '+'
                            else write $ BC.replicate (fromIntegral (256-b)) '-' 
+    tell' = lift . tell . S.singleton
