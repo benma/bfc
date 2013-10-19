@@ -77,7 +77,7 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
   where
     initialEvalState :: EvalState
     initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
-      where shortByteParamsArray = Array.array (0,255) $ zip [0..] shortByteParams'
+                       where shortByteParamsArray = Array.array (0, 255) $ zip [0..] shortByteParams'
 
     skip = return ()
 
@@ -638,20 +638,20 @@ compile shortByteParams' = tie . execWriterT . flip evalStateT initialEvalState 
     -- addByteShort writes the byte `b` at position `pos` in a more clever way than just replicating `b` pluses.
     -- It outputs code of the form "a[>d<c]" where a, d, c are the optimal number of pluses or minuses to produce the byte `b`.
     --addByteShort _ pos b = let b' = if b < 0 then 256+b else b in atPos pos $ addByte b'
-    addByteShort tmpPos pos b = do
-      let b' = if b < 0 then 256 + b else b -- subtract b by adding (256-b)
+    addByteShort tmpPos pos byte = do
+      let b' = if byte < 0 then 256 + byte else byte -- subtract b by adding (256-b)
       params <- use shortByteParams
-      let (a', loopIterations, c', d') = params Array.! fromIntegral b'
+      let (a', loopIterations, c', d', diff) = params Array.! fromIntegral b'
       if loopIterations == 1
-      then atPos pos $ writeByteShort d' -- do not output looping code if there is only one iteration
-      else do { -- write (BC.pack (show (a',loopIterations, c', d', b')))
-              ; tmp <- maybe mallocByte return tmpPos
-              ; -- tmpPos needs to be zero at the beginning, will be zero at the end.
-              ; atPos tmp $ writeByteShort a'
-              ; loopByte tmp $ do { atPos pos $ writeByteShort d'
-                                  ; atPos tmp $ writeByteShort c'
-                                  }
-              }
+        then atPos pos $ writeByteShort d' -- do not output looping code if there is only one iteration
+        else do { tmp <- maybe mallocByte return tmpPos
+                ; -- tmpPos needs to be zero at the beginning, will be zero at the end.
+                ; atPos tmp $ writeByteShort a'
+                ; loopByte tmp $ do { atPos pos $ writeByteShort d'
+                                    ; atPos tmp $ writeByteShort c'
+                                    }
+                }
+      atPos pos $ if diff > 0 then write $ BC.replicate diff '+' else write $ BC.replicate (-diff) '-'
       where
         writeByteShort b = if b < 128
                            then write $ BC.replicate (fromIntegral b) '+'
