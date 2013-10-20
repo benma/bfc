@@ -17,7 +17,9 @@ import Control.Applicative((<*))
 import Control.Exception(assert)
 import Control.Applicative((<$>))
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.Writer.Strict
+import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Tardis
 
@@ -63,45 +65,58 @@ makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
-data Pass1 = Erase PositionRefOffset
-           | Write BS.ByteString
-           | Pass1StartLoop PositionRefOffset
-           | Pass1EndLoop PositionRefOffset
-           | Pass1AtPosStart PositionRefOffset
-           | Pass1AtPosEnd PositionRefOffset
+data Pass1' = Write' BS.ByteString
+            | Erase
+            | StartLoop'
+            | EndLoop'
+data Pass1 = Write BS.ByteString
+           | Pass1AtPos PositionRefOffset (S.Seq Pass1')
 
-getTapeAccess :: S.Seq Pass1 -> S.Seq (TapeAccessSequence PositionRef)
+getTapeAccess :: (F.Foldable t) => t Pass1 -> S.Seq (TapeAccessSequence PositionRef)
 getTapeAccess l = F.foldl' (\a b -> a <> go b) mempty l
   where
-    go (Pass1AtPosStart (PositionRefOffset pos' _ size)) = S.singleton $ Access pos' size
-    go (Erase (PositionRefOffset pos' _ size)) = S.singleton $ Access pos' size
-    go (Pass1StartLoop _) = S.singleton StartLoop
-    go (Pass1EndLoop _) = S.singleton EndLoop
+    go (Pass1AtPos (PositionRefOffset pos' _ size) ls) = (S.singleton $ Access pos' size) <> (F.foldl' (\a b -> a <> go' b) mempty ls)
     go _ = S.empty
+    go' StartLoop' = S.singleton StartLoop
+    go' EndLoop' = S.singleton EndLoop
+    go' _ = S.empty
 
-data Pass1State = Pass1State { _occupied :: Set.HashSet Position
+data Pass1State = Pass1State { _occupied :: Set.HashSet Position,
+                               _loopLevel :: Int
                              }
 makeLenses ''Pass1State
 
-compilePass1 :: S.Seq Pass1 -> BS.ByteString
+compilePass1 :: (F.Foldable t) => t Pass1 -> BS.ByteString
 compilePass1 l = execWriter . flip evalStateT initialState $ F.for_ l eval
   where
-    initialState = Pass1State Set.empty
+    initialState = Pass1State Set.empty 0
     eval (Write s) = write s
-    eval (Erase p) = do
-      let pos = getPos p
-      isOccupied <- uses occupied (Set.member pos)
-      when isOccupied $ do
-        atPos p $ write "[-]"
-        occupied %= Set.delete pos
-    eval (Pass1AtPosStart pos@(PositionRefOffset _ offset size)) = do
+    eval (Pass1AtPos pos@(PositionRefOffset _ offset size) l') = do
       let p = getPos pos
-      if offset == 0
-        then forM_ [0..size] $ \i -> occupied %= Set.insert ((getPos pos) + i)
-        else occupied %= Set.insert p
-      move p
-    eval (Pass1AtPosEnd pos) = move (- getPos pos)
-    eval _ = write ""
+      let occupy = if offset == 0
+                   then forM_ [0..size] $ \i -> occupied %= Set.insert (p + i)
+                   else occupied %= Set.insert p
+      F.for_ l' $ \el -> case el of
+        StartLoop' -> do
+          atPos pos $ write "["
+          loopLevel += 1
+        EndLoop' -> do
+          -- occupy -- why is this needed?
+          atPos pos $ write "]"
+          -- by definition, the cell is zero after the loop has finished
+          occupied %= Set.delete p
+          loopLevel -= 1
+        Write' s -> do
+          occupy
+          atPos pos $ write s
+        Erase -> do
+          isOccupied <- uses occupied (Set.member p)
+          loopLevel' <- use loopLevel
+          when (isOccupied || loopLevel' > 0) $ do
+            atPos pos $ write "[-]"
+            occupied %= Set.delete p
+    
+    -- eval _ = write ""
     atPos pos s = let p' = getPos pos in move p' >> s >> move (-p')
     move pos = if pos < 0
                then write $ BC.replicate (-pos) '<'
@@ -145,10 +160,8 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       cond <- mallocBool
       convertToBool expr cond
       loopByte cond $ do
-        --tell' $ Pass1StartLoop cond
         forM_ is evalAST
         convertToBool expr cond
-        --tell' $ Pass1EndLoop cond
     evalAST ast@(ADef defName _ _) = do
       defMap %= Map.insert defName (replaceVars ast)
         where replaceVars = transform (\ast' -> case ast' of 
@@ -170,7 +183,7 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       atPos ret $ addByte $ fromEnum $ c
       return $ Just ret
     evalExpression (ADefCall "trace" [AExpression (AString s)]) = do
-      write $ BC.pack s
+      tell' . Write $ BC.pack s
       return Nothing
     evalExpression (ADefCall "ord" [AExpression expr]) = do
       (Just pos) <- evalExpression expr
@@ -433,7 +446,7 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
                   then copyByte pos1 res
                   else writeIfByte (pos1+:i) (handle (i-1)) $ Just $ copyByte (pos1+:i) res
           handle (s1-1)
-        else skip
+        else error "todo: size not equal"
       return $ Just res
     evalExpression (AInfixOp OpIntegerEq (AExpression left) (AExpression right)) = do
       (Just pos1) <- evalExpression left
@@ -506,26 +519,15 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       newPos1 <- resize RightAligned pos1 size 
       newPos2 <- resize RightAligned pos2 size
       writeAddSubInt operator newPos1 newPos2
-
     convertToBool expr dstPos = do
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
-    write = tell' . Write
-    atPos pos@(PositionRefOffset pos' offset' size) f = do
-      tell' $ Pass1AtPosStart pos
-      f
-      tell' $ Pass1AtPosEnd pos
-      -- size <- getSize (PositionRefOffset pos' 0)
-      -- tellTapeAccess $ Access pos' size
-      -- tell' $ Pass1Access pos' size
-      -- p <- getPos' pos'
-      -- move (p + offset') >> f >> move (-p - offset')
+    write = tell . S.singleton . Write'
+    atPos pos@(PositionRefOffset pos' offset' size) f = tell' $ Pass1AtPos pos $ execWriter f
     loopByte pos f = do
-      atPos pos $ write "["
-      tell' $ Pass1StartLoop pos
+      atPos pos $ tell . S.singleton $ StartLoop'
       f
-      tell' $ Pass1EndLoop pos
-      atPos pos $ write "]"
+      atPos pos $ tell . S.singleton $ EndLoop'
     move pos = write $ if pos < 0
                        then BC.replicate (-pos) '<'
                        else BC.replicate pos '>'
@@ -534,7 +536,8 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
     erase pos@(PositionRefOffset pos' offset' size) = do
-      tell' $ Erase pos
+      atPos pos $ tell . S.singleton $ Erase
+      -- tell' $ Erase pos
       --atPos pos $ writeByte (0::Word8)
     resize alignment pos newSize = do
       oldSize <- getSize pos
