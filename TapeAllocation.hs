@@ -75,3 +75,4 @@ findAllocation tapeAccessSequence = findAllocation' (F.toList $ annotateEnd tape
                                         Nothing -> go (x2:xs') (Just x1) (size' - 1)
                                         just -> go (x2:xs') just (size' - 1)
                                       else go (x2:xs') Nothing size
+        go _ _ _ = undefined -- should never happen on an infinite list

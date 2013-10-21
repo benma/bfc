@@ -3,7 +3,7 @@
 
 module CodeGenerator (compile) where
 
-import TapeAllocation(TapeAccessSequence(..), findAllocation, Allocation)
+import TapeAllocation(TapeAccessSequence(..), findAllocation)
 import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position)
 
 import Prelude hiding(foldr, (.))
@@ -13,15 +13,11 @@ import Parser(AST(..), Op(..), parseString)
 import Data.Word(Word8)
 import Data.Digits(digits)
 import Control.Category((.))
-import Control.Applicative((<*))
 import Control.Exception(assert)
 import Control.Applicative((<$>))
 import Control.Monad
-import Control.Monad.Identity
 import Control.Monad.Writer.Strict
-import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Control.Monad.Tardis
 
 import Control.Lens
 import Data.Char(ord)
@@ -523,10 +519,10 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
     write = tell . S.singleton . Write'
-    atPos pos@(PositionRefOffset pos' offset' size) f = tell' $ Pass1AtPos pos $ execWriter f
+    atPos pos f = tell' $ Pass1AtPos pos $ execWriter f
     loopByte pos f = do
       atPos pos $ tell . S.singleton $ StartLoop'
-      f
+      _ <- f
       atPos pos $ tell . S.singleton $ EndLoop'
     move pos = write $ if pos < 0
                        then BC.replicate (-pos) '<'
@@ -535,10 +531,7 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
-    erase pos@(PositionRefOffset pos' offset' size) = do
-      atPos pos $ tell . S.singleton $ Erase
-      -- tell' $ Erase pos
-      --atPos pos $ writeByte (0::Word8)
+    erase pos = atPos pos $ tell . S.singleton $ Erase
     resize alignment pos newSize = do
       oldSize <- getSize pos
       type_ <- getType pos
@@ -670,7 +663,7 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
     malloc = mallocT Nothing
     mallocByte = malloc 1
     mallocBool = mallocT (Just TBool) 1
-    getSize (PositionRefOffset pos 0 size) = return size
+    getSize (PositionRefOffset _ 0 size) = return size
     getSize _ = undefined
     getSize' pos = uses memMap (^?! ix pos . memSize)
     getType (PositionRefOffset pos 0 _) = uses memMap (^?! ix pos . memType)
