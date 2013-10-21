@@ -515,12 +515,13 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
     convertToBool expr dstPos = do
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
-    write = tell . S.singleton . AtPosWrite
+    tellAtPos = tell. S.singleton
+    write = tellAtPos . AtPosWrite
     atPos pos f = tell' $ AtPos pos $ execWriter f
     loopByte pos f = do
-      atPos pos $ tell . S.singleton $ AtPosStartLoop
+      atPos pos $ tellAtPos AtPosStartLoop
       _ <- f
-      atPos pos $ tell . S.singleton $ AtPosEndLoop
+      atPos pos $ tellAtPos AtPosEndLoop
     move pos = write $ if pos < 0
                        then BC.replicate (-pos) '<'
                        else BC.replicate pos '>'
@@ -528,7 +529,7 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
-    erase pos = atPos pos $ tell . S.singleton $ AtPosErase
+    erase pos = atPos pos $ tellAtPos AtPosErase
     resize alignment pos newSize = do
       oldSize <- getSize pos
       type_ <- getType pos
