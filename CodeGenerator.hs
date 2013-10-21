@@ -4,7 +4,7 @@
 module CodeGenerator (compile) where
 
 import TapeAllocation(TapeAccessSequence(..), findAllocation)
-import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position)
+import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
 
 import Prelude hiding(foldr, (.))
 
@@ -61,68 +61,65 @@ makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
-data Pass1' = Write' BS.ByteString
-            | Erase
-            | StartLoop'
-            | EndLoop'
-data Pass1 = Write BS.ByteString
-           | Pass1AtPos PositionRefOffset (S.Seq Pass1')
+data AtPos = AtPosWrite BS.ByteString
+           | AtPosErase
+           | AtPosStartLoop
+           | AtPosEndLoop
+data BfIR = Write BS.ByteString
+          | AtPos PositionRefOffset (S.Seq AtPos)
 
-getTapeAccess :: (F.Foldable t) => t Pass1 -> S.Seq (TapeAccessSequence PositionRef)
-getTapeAccess l = F.foldl' (\a b -> a <> go b) mempty l
+getTapeAccess :: (F.Foldable t) => t BfIR -> S.Seq (TapeAccessSequence PositionRef)
+getTapeAccess = F.foldMap go
   where
-    go (Pass1AtPos (PositionRefOffset pos' _ size) ls) = (S.singleton $ Access pos' size) <> (F.foldl' (\a b -> a <> go' b) mempty ls)
+    go (AtPos (PositionRefOffset pos' _ size) ls) = (S.singleton $ Access pos' size) <> (F.foldMap go' ls)
     go _ = S.empty
-    go' StartLoop' = S.singleton StartLoop
-    go' EndLoop' = S.singleton EndLoop
+    go' AtPosStartLoop = S.singleton StartLoop
+    go' AtPosEndLoop = S.singleton EndLoop
     go' _ = S.empty
 
-data Pass1State = Pass1State { _occupied :: Set.HashSet Position,
-                               _loopLevel :: Int
-                             }
-makeLenses ''Pass1State
+data BfIRState = BfIRState { _occupied :: Set.HashSet Position,
+                             _loopLevel :: Int
+                           }
+makeLenses ''BfIRState
 
-compilePass1 :: (F.Foldable t) => t Pass1 -> BS.ByteString
-compilePass1 l = execWriter . flip evalStateT initialState $ F.for_ l eval
+compileBfIR :: (F.Foldable t) => t BfIR -> BS.ByteString
+compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
   where
-    initialState = Pass1State Set.empty 0
+    initialState = BfIRState Set.empty 0
     eval (Write s) = write s
-    eval (Pass1AtPos pos@(PositionRefOffset _ offset size) l') = do
+    eval (AtPos pos@(PositionRefOffset _ offset size) l') = do
       let p = getPos pos
-      let occupy = if offset == 0
-                   then forM_ [0..size] $ \i -> occupied %= Set.insert (p + i)
-                   else occupied %= Set.insert p
       F.for_ l' $ \el -> case el of
-        StartLoop' -> do
-          atPos pos $ write "["
+        AtPosStartLoop -> do
+          atPos p $ write "["
           loopLevel += 1
-        EndLoop' -> do
-          -- occupy -- why is this needed?
-          atPos pos $ write "]"
+        AtPosEndLoop -> do
+          atPos p $ write "]"
           -- by definition, the cell is zero after the loop has finished
           occupied %= Set.delete p
           loopLevel -= 1
-        Write' s -> do
-          occupy
-          atPos pos $ write s
-        Erase -> do
+        AtPosWrite s -> do
+          if offset == 0
+            then forM_ [0..size] $ \i -> occupied %= Set.insert (p + fromIntegral i)
+            else occupied %= Set.insert p
+          atPos p $ write s
+        AtPosErase -> do
           isOccupied <- uses occupied (Set.member p)
           loopLevel' <- use loopLevel
           when (isOccupied || loopLevel' > 0) $ do
-            atPos pos $ write "[-]"
+            atPos p $ write "[-]"
             occupied %= Set.delete p
-    
-    -- eval _ = write ""
-    atPos pos s = let p' = getPos pos in move p' >> s >> move (-p')
-    move pos = if pos < 0
-               then write $ BC.replicate (-pos) '<'
-               else write $ BC.replicate pos '>'
+    atPos pos s = move pos >> s >> move (-pos)
+    move (Position pos) = if pos < 0
+                          then write $ BC.replicate (-pos) '<'
+                          else write $ BC.replicate pos '>'
     allocation = findAllocation $ getTapeAccess l
-    getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + offset
+    getPos :: PositionRefOffset -> Position
+    getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + fromIntegral offset
     write = lift . tell
 
 compile :: [ShortByteParams] -> AST -> BS.ByteString
-compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEvalState . evalAST
+compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEvalState . evalAST
   where
     initialEvalState :: EvalState
     initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
@@ -130,7 +127,7 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
 
     skip = return ()
 
-    evalAST :: AST -> StateT EvalState (Writer (S.Seq Pass1)) ()
+    evalAST :: AST -> StateT EvalState (Writer (S.Seq BfIR)) ()
     evalAST (AProgram is) = mapM_ evalAST is
     evalAST (AExpression expr) = evalExpression expr >> skip
     evalAST (APrint (AExpression (AVariable varName))) = do
@@ -518,12 +515,12 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
     convertToBool expr dstPos = do
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
-    write = tell . S.singleton . Write'
-    atPos pos f = tell' $ Pass1AtPos pos $ execWriter f
+    write = tell . S.singleton . AtPosWrite
+    atPos pos f = tell' $ AtPos pos $ execWriter f
     loopByte pos f = do
-      atPos pos $ tell . S.singleton $ StartLoop'
+      atPos pos $ tell . S.singleton $ AtPosStartLoop
       _ <- f
-      atPos pos $ tell . S.singleton $ EndLoop'
+      atPos pos $ tell . S.singleton $ AtPosEndLoop
     move pos = write $ if pos < 0
                        then BC.replicate (-pos) '<'
                        else BC.replicate pos '>'
@@ -531,7 +528,7 @@ compile shortByteParams' = compilePass1 . execWriter . flip evalStateT initialEv
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
-    erase pos = atPos pos $ tell . S.singleton $ Erase
+    erase pos = atPos pos $ tell . S.singleton $ AtPosErase
     resize alignment pos newSize = do
       oldSize <- getSize pos
       type_ <- getType pos

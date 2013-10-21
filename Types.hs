@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-module Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Position, Size) where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+module Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Position(..), Size) where
 
 import qualified Data.Data as Data
 
@@ -32,4 +33,5 @@ infixl 6 +:
 type Size = Int
 
 -- This type represents an actual position on the tape.
-type Position = Int
+newtype Position = Position Int
+                 deriving (Eq, Num, Hashable)

@@ -13,7 +13,7 @@ import qualified Data.Foldable as F
 
 import Control.Monad.Tardis
 
-import Types(Size, Position)
+import Types(Size, Position(..))
 
 data TapeAccessSequence a = Access a Size | StartLoop | EndLoop
 data TapeAccessSequenceNoLoops a = Start' a Size | End' a
@@ -63,7 +63,7 @@ findAllocation tapeAccessSequence = findAllocation' (F.toList $ annotateEnd tape
       case x of
         Start' v size -> case allocation ^. at v of
           Nothing -> let pos = findSeqOfLength size $ [0..] \\ (concat $ Map.elems liveVars)
-                     in findAllocation' xs (Map.insert v pos allocation) (Map.insert v [pos..pos+size-1] liveVars)
+                     in findAllocation' xs (Map.insert v (Position pos) allocation) (Map.insert v [pos..pos+size-1] liveVars)
           _ -> findAllocation' xs allocation liveVars
         End' v -> findAllocation' xs allocation (Map.delete v liveVars)
 
