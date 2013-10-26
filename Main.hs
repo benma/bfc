@@ -4,7 +4,8 @@
 
 import Parser(parseString)
 import CodeGenerator(compile)
-import BFS(BfChar(..),toString, bf)
+import BFS(bf, parseBfDSL)
+import BfIR(BfChar(..), toString)
 import qualified Data.Sequence as S
 import Data.Sequence(ViewR(..), ViewL(..), (|>))
 import Control.Applicative((<$>))
@@ -24,9 +25,9 @@ optimizeOutput = go S.empty
       | any (\(l,r) -> (s == l && x == r)) [(BfMoveLeft, BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = go ss xs
     go stack (S.viewl -> x :< xs) = go (stack |> x) xs
     go _ _ = error "impossible"
-    stripPrefix (S.fromList -> cs) xs = let (left, right) = S.splitAt (S.length cs) xs
+    stripPrefix cs xs = let (left, right) = S.splitAt (S.length cs) xs
                                         in if left == cs then Just right else Nothing
-    stripPostfix (S.fromList -> cs) xs = let (left, right) = S.splitAt (S.length xs - S.length cs) xs
+    stripPostfix cs xs = let (left, right) = S.splitAt (S.length xs - S.length cs) xs
                                          in if right == cs then Just left else Nothing
 
 main :: IO ()

@@ -7,7 +7,8 @@ module CodeGenerator (compile) where
 import TapeAllocation(TapeAccessSequence(..), findAllocation)
 import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
 
-import BFS(BfChar, bf)
+import BFS(bf)
+import BfIR(AtPos(..), BfIR(..), BfS)
 
 import ShortBytes(ShortByteParams)
 import Parser(AST(..), Op(..), parseString)
@@ -56,13 +57,6 @@ makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
-data AtPos = AtPosWrite (S.Seq BfChar)
-           | AtPosErase
-           | AtPosStartLoop 
-           | AtPosEndLoop
-data BfIR = Write (S.Seq BfChar)
-          | AtPos PositionRefOffset (S.Seq AtPos)
-
 getTapeAccess :: (F.Foldable t) => t BfIR -> S.Seq (TapeAccessSequence PositionRef)
 getTapeAccess = F.foldMap go
   where
@@ -77,7 +71,7 @@ data BfIRState = BfIRState { _occupied :: Set.HashSet Position,
                            }
 makeLenses ''BfIRState
 
-compileBfIR :: (F.Foldable t) => t BfIR -> S.Seq BfChar
+compileBfIR :: (F.Foldable t) => t BfIR -> BfS
 compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
   where
     initialState = BfIRState Set.empty 0
@@ -111,10 +105,10 @@ compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
     allocation = findAllocation $ getTapeAccess l
     getPos :: PositionRefOffset -> Position
     getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + fromIntegral offset
-    write = lift . tell . S.fromList
+    write = lift . tell
     write' = lift . tell
 
-compile :: [ShortByteParams] -> AST -> S.Seq BfChar
+compile :: [ShortByteParams] -> AST -> BfS
 compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEvalState . evalAST
   where
     initialEvalState :: EvalState
@@ -512,7 +506,7 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
     tellAtPos = tell. S.singleton
-    write = tellAtPos . AtPosWrite . S.fromList
+    write = tellAtPos . AtPosWrite
     atPos pos f = tell' $ AtPos pos $ execWriter f
     loopByte pos f = do
       atPos pos $ tellAtPos AtPosStartLoop

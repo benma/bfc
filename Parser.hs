@@ -59,9 +59,7 @@ instance L.Plated AST where
   plate = uniplate
 
 parseString :: String -> AST
-parseString input = case parse init' "" input of
-  Left err -> error $ show err
-  Right output -> output
+parseString = either (error . show) id . parse init' "" 
   where
     init' = between _whiteSpace eof program
     program = liftM AProgram instructions
