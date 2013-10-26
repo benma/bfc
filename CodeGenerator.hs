@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module CodeGenerator (compile) where
@@ -6,13 +7,12 @@ module CodeGenerator (compile) where
 import TapeAllocation(TapeAccessSequence(..), findAllocation)
 import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
 
-import Prelude hiding(foldr, (.))
+import BFS(BfChar, bf)
 
 import ShortBytes(ShortByteParams)
 import Parser(AST(..), Op(..), parseString)
 import Data.Word(Word8)
 import Data.Digits(digits)
-import Control.Category((.))
 import Control.Exception(assert)
 import Control.Applicative((<$>))
 import Control.Monad
@@ -28,12 +28,7 @@ import qualified Data.Sequence as S
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BC
-
 import qualified Data.Array as Array
-
-
 import qualified Data.Foldable as F
 
 data Type = TInteger
@@ -61,11 +56,11 @@ makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
-data AtPos = AtPosWrite BS.ByteString
+data AtPos = AtPosWrite (S.Seq BfChar)
            | AtPosErase
-           | AtPosStartLoop
+           | AtPosStartLoop 
            | AtPosEndLoop
-data BfIR = Write BS.ByteString
+data BfIR = Write (S.Seq BfChar)
           | AtPos PositionRefOffset (S.Seq AtPos)
 
 getTapeAccess :: (F.Foldable t) => t BfIR -> S.Seq (TapeAccessSequence PositionRef)
@@ -82,19 +77,19 @@ data BfIRState = BfIRState { _occupied :: Set.HashSet Position,
                            }
 makeLenses ''BfIRState
 
-compileBfIR :: (F.Foldable t) => t BfIR -> BS.ByteString
+compileBfIR :: (F.Foldable t) => t BfIR -> S.Seq BfChar
 compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
   where
     initialState = BfIRState Set.empty 0
-    eval (Write s) = write s
+    eval (Write s) = write' s
     eval (AtPos pos@(PositionRefOffset _ offset size) l') = do
       let p = getPos pos
       F.for_ l' $ \el -> case el of
         AtPosStartLoop -> do
-          atPos p $ write "["
+          atPos p $ write [bf|[|]
           loopLevel += 1
         AtPosEndLoop -> do
-          atPos p $ write "]"
+          atPos p $ write [bf|]|]
           -- by definition, the cell is zero after the loop has finished
           occupied %= Set.delete p
           loopLevel -= 1
@@ -102,23 +97,24 @@ compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
           if offset == 0
             then forM_ [0..size] $ \i -> occupied %= Set.insert (p + fromIntegral i)
             else occupied %= Set.insert p
-          atPos p $ write s
+          atPos p $ write' s
         AtPosErase -> do
           isOccupied <- uses occupied (Set.member p)
           loopLevel' <- use loopLevel
           when (isOccupied || loopLevel' > 0) $ do
-            atPos p $ write "[-]"
+            atPos p $ write [bf|[-]|]
             occupied %= Set.delete p
     atPos pos s = move pos >> s >> move (-pos)
     move (Position pos) = if pos < 0
-                          then write $ BC.replicate (-pos) '<'
-                          else write $ BC.replicate pos '>'
+                          then replicateM_ (-pos) $ write [bf|<|]
+                          else replicateM_ pos $ write [bf|>|]
     allocation = findAllocation $ getTapeAccess l
     getPos :: PositionRefOffset -> Position
     getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + fromIntegral offset
-    write = lift . tell
+    write = lift . tell . S.fromList
+    write' = lift . tell
 
-compile :: [ShortByteParams] -> AST -> BS.ByteString
+compile :: [ShortByteParams] -> AST -> S.Seq BfChar
 compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEvalState . evalAST
   where
     initialEvalState :: EvalState
@@ -133,17 +129,17 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
     evalAST (APrint (AExpression (AVariable varName))) = do
       pos <- getPos varName
       size <- getSize pos
-      atPos pos $ do write $ BC.concat $ replicate size ".>"
+      atPos pos $ do replicateM_ size $ write [bf|.>|]
                      move (-size)
     evalAST (APrint (AExpression (AString s))) = do
       pos <- mallocByte
       let bytes = map ord s
       tmp <- mallocByte
-      forM_ (zipWith (-) bytes (0:bytes)) $ \byte -> addByteShort (Just tmp) pos byte >> (atPos pos $ write ".")
+      forM_ (zipWith (-) bytes (0:bytes)) $ \byte -> addByteShort (Just tmp) pos byte >> (atPos pos $ write [bf|.|])
     evalAST (APrint (AExpression expr)) = do
       (Just pos) <- evalExpression expr
       size <- getSize pos
-      atPos pos $ do write $ BC.concat $ replicate size ".>"
+      atPos pos $ do replicateM_ size $ write [bf|.>|]
                      move (-size)
     evalAST (AIf (AExpression expr) is elsePart) = do
       pos <- mallocBool
@@ -169,15 +165,15 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
       return $ Just pos
     evalExpression (ADefCall "read" []) = do
       pos <- mallocT (Just TString) 1
-      atPos pos $ write ","
+      atPos pos $ write [bf|,|]
       return $ Just pos
     evalExpression (ADefCall "ord" [AExpression (AString (c:[]))]) = do
       ret <- mallocT (Just TInteger) 1
       atPos ret $ addByte $ fromEnum $ c
       return $ Just ret
-    evalExpression (ADefCall "trace" [AExpression (AString s)]) = do
-      tell' . Write $ BC.pack s
-      return Nothing
+    -- evalExpression (ADefCall "trace" [AExpression (AString s)]) = do
+    --   tell' . Write $ toBfS' $ BC.pack s
+    --   return Nothing
     evalExpression (ADefCall "ord" [AExpression expr]) = do
       (Just pos) <- evalExpression expr
       size <- getSize pos
@@ -276,7 +272,7 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
           copyByte indexPos (pos+:1)
           copyByte indexPos (pos+:2)
           copyByte (rightPos +: (rightSize-1)) (pos+:3)
-          atPos pos $ write ">[>>>[-<<<<+>>>>]<[->+<]<[->+<]<[->+<]>-]>>>[-]<[->+<]<[[-<+>]<<<[->>>>+<<<<]>>-]<<"
+          atPos pos $ write [bf|>[>>>[-<<<<+>>>>]<[->+<]<[->+<]<[->+<]>-]>>>[-]<[->+<]<[[-<+>]<<<[->>>>+<<<<]>>-]<<|]
           return Nothing
         _ -> do
           assert False skip
@@ -292,7 +288,7 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
           copyByte indexPos (pos+:1)
           copyByte indexPos (pos+:2)
           erase (pos+:3)
-          atPos pos $ write ">[>>>[-<<<<+>>>>]<<[->+<]<[->+<]>-]>>>[-<+<<+>>>]<<<[->>>+<<<]>[[-<+>]>[-<+>]<<<<[->>>>+<<<<]>>-]<<"
+          atPos pos $ write [bf|>[>>>[-<<<<+>>>>]<<[->+<]<[->+<]>-]>>>[-<+<<+>>>]<<<[->>>+<<<]>[[-<+>]>[-<+>]<<<<[->>>>+<<<<]>>-]<<|]
           copyByte' (pos+:3) ret
           return $ Just ret
         _ -> error "not supported"
@@ -516,15 +512,15 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
     tellAtPos = tell. S.singleton
-    write = tellAtPos . AtPosWrite
+    write = tellAtPos . AtPosWrite . S.fromList
     atPos pos f = tell' $ AtPos pos $ execWriter f
     loopByte pos f = do
       atPos pos $ tellAtPos AtPosStartLoop
       _ <- f
       atPos pos $ tellAtPos AtPosEndLoop
-    move pos = write $ if pos < 0
-                       then BC.replicate (-pos) '<'
-                       else BC.replicate pos '>'
+    move pos = if pos < 0
+               then replicateM_ (-pos) $ write [bf|<|]
+               else replicateM_ pos $ write [bf|>|]
     writeMove 1 srcPos dstPos = do
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
@@ -546,16 +542,16 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
                        LeftAligned ->  writeCopy' newSize pos newPos
                        RightAligned -> writeCopy' newSize (pos +: (oldSize-newSize)) newPos
                      return newPos
-    writeByte 0 = write "[-]"
+    writeByte 0 = write [bf|[-]|]
     writeByte b = writeByte 0 >> addByte b
     writeCopy 1 srcPos dstPos = do
       tmp <- mallocByte
       -- move src to dst and tmp
       erase dstPos
-      atPos srcPos $ write "["
+      atPos srcPos $ write [bf|[|]
       atPos dstPos inc
       atPos tmp inc
-      atPos srcPos $ write "-]"
+      atPos srcPos $ write [bf|-]|]
       writeMove (1::Word8) tmp srcPos
     writeCopy size srcPos dstPos = (forM_ [0..size-1] $ \i -> copyByte (srcPos +: i) (dstPos +: i))
     copyByte = writeCopy 1
@@ -563,16 +559,16 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
     writeCopy' 1 srcPos dstPos = do
       tmp <- mallocByte
       -- move src to dst and tmp
-      atPos srcPos $ write "["
+      atPos srcPos $ write [bf|[|]
       atPos dstPos inc
       atPos tmp inc
-      atPos srcPos $ write "-]"
+      atPos srcPos $ write [bf|-]|]
       writeMove (1::Word8) tmp srcPos
     writeCopy' size srcPos dstPos = (forM_ [0..size-1] $ \i -> copyByte' (srcPos +: i) (dstPos +: i))
     copyByte' = writeCopy' 1
-    inc = write "+"
-    dec = write "-"
-    addByte b = write $ BC.replicate (fromIntegral b) '+'
+    inc = write [bf|+|]
+    dec = write [bf|-|]
+    addByte b = replicateM_ (fromIntegral b) inc
     -- dstPos will contain result
     writeOrByte dstPos srcPos = do
       let setOne = atPos dstPos $ writeByte (1::Word8)
@@ -677,7 +673,7 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
         -- Nothing => let function allocate a new temporary byte
         addByteShort Nothing (pos +: i) byte
     -- addByteShort writes the byte `b` at position `pos` in a more clever way than just replicating `b` pluses.
-    -- It outputs code of the form "a[>d<c]" where a, d, c are the optimal number of pluses or minuses to produce the byte `b`.
+    -- It outputs code of the form "a[>d<c]e" where a, d, c, e are the optimal number of pluses or minuses to produce the byte `b`.
     -- addByteShort _ pos b = let b' = if b < 0 then 256+b else b in atPos pos $ addByte b'
     addByteShort tmpPos pos byte = do
       let b' = if byte < 0 then 256 + byte else byte -- subtract b by adding (256-b)
@@ -692,9 +688,9 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
                                     ; atPos tmp $ writeByteShort c'
                                     }
                 }
-      atPos pos $ if diff > 0 then write $ BC.replicate diff '+' else write $ BC.replicate (-diff) '-'
+      atPos pos $ if diff > 0 then replicateM_ diff inc else replicateM_ (-diff) dec
       where
         writeByteShort b = if b < 128
-                           then write $ BC.replicate (fromIntegral b) '+'
-                           else write $ BC.replicate (fromIntegral (256-b)) '-' 
+                           then replicateM_ (fromIntegral b) inc
+                           else replicateM_ (fromIntegral (256-b)) dec
     tell' = lift . tell . S.singleton

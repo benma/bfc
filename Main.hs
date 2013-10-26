@@ -1,43 +1,38 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 import Parser(parseString)
 import CodeGenerator(compile)
+import BFS(BfChar(..),toString, bf)
+import qualified Data.Sequence as S
+import Data.Sequence(ViewR(..), ViewL(..), (|>))
+import Control.Applicative((<$>))
 
-import qualified Data.Attoparsec as A
-import qualified Data.Attoparsec.Char8 as AC
-import Control.Monad
-import Control.Applicative((<$>), (<|>), (<*), (*>))
-
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
 
 import ShortBytes(getCachedShortByteParams)
-  
 
--- remove all balanced <> and >< and -+ and +-
-optimizeOutput :: BC.ByteString -> BC.ByteString
-optimizeOutput = (parse'
-                  $ liftM BS.concat
-                  $ A.many'
-                  $ A.try (A.many1 (AC.char '[' >> (A.option "" skipNested) >> AC.char '-' >> (A.option "" skipNested) >> AC.char ']' >> (A.option "" skipNested)) >> return "[-]")
-                  <|> skipNested
---                  <|> A.try skipTrailing
-                  <|> BC.singleton <$> AC.anyChar
-                 )
+optimizeOutput :: S.Seq BfChar -> S.Seq BfChar
+optimizeOutput = go S.empty
   where
-    parse' p = either (error . show) id . A.parseOnly p 
-    skipNested = A.try $ A.choice $ map balanced [('<','>'),('>','<'),('+','-'),('-','+')]
-    --balanced ('<','>') = between (AC.char '<') (AC.char '>') $ A.option "" $ A.many1 skipNested >> return ""
-    balanced (a,b) = between (AC.char a) (AC.char b) $ A.option "" skipNested
-    between left right f = left *> f <* right
-                       -- all code after last '.' or ',' is irrelevant
---    skipTrailing = A.many1 (A.choice $ map AC.char "<>+-") >> A.endOfInput >> return ""
-    
+    go stack (S.null -> True) = stack
+    -- [-][-] => [-]
+    go stack@(stripPostfix [bf|[-]|] -> Just _) (stripPrefix [bf|[-]|] -> Just xs) = go stack xs
+    -- remove all balanced <> and >< and -+ and +-
+    go (S.viewr -> ss :> s) (S.viewl -> x :< xs)
+      | any (\(l,r) -> (s == l && x == r)) [(BfMoveLeft, BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = go ss xs
+    go stack (S.viewl -> x :< xs) = go (stack |> x) xs
+    go _ _ = error "impossible"
+    stripPrefix (S.fromList -> cs) xs = let (left, right) = S.splitAt (S.length cs) xs
+                                        in if left == cs then Just right else Nothing
+    stripPostfix (S.fromList -> cs) xs = let (left, right) = S.splitAt (S.length xs - S.length cs) xs
+                                         in if right == cs then Just left else Nothing
+
 main :: IO ()
 main = do
-  -- print $ optimizeOutput "<<><>>"
   shortByteParams <- getCachedShortByteParams
-  (optimizeOutput . compile shortByteParams . parseString) <$> getContents >>= BC.putStrLn
+  (toString . optimizeOutput . compile shortByteParams . parseString) <$> getContents >>= BC.putStrLn
 
 -- main :: IO ()
 -- main = (show . parseString) <$> getContents >>= putStrLn
