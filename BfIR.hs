@@ -34,7 +34,7 @@ charToBfS '+' = Just BfInc
 charToBfS '-' = Just BfDec
 charToBfS '[' = Just BfStartLoop
 charToBfS ']' = Just BfEndLoop
-charToBfS a = Nothing -- error ("Could not parse `" ++ [a] ++ "`")
+charToBfS _ = Nothing -- error ("Could not parse `" ++ [a] ++ "`")
  
 bfsToChar :: BfChar -> Char
 bfsToChar BfDot = '.' 

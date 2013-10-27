@@ -9,21 +9,20 @@ import Language.Haskell.TH.Syntax
 import Language.Haskell.TH.Quote
 import Text.ParserCombinators.Parsec
 import qualified Data.Sequence as S
-import Control.Applicative((<*), (*>), (<$>))
-import Control.Monad
+import Control.Applicative((<$>))
 
 parseBfDSL :: String -> [(String, [BfChar])]
 parseBfDSL = either (error . show) id . parse p ""
   where
     p = between spaces eof (many atpos)
     atpos = do
-      char '@'
+      _ <- char '@'
       spaces
       var <- between (optional $ char '(') (optional $ char ')') (many1 alphaNum)
       spaces
-      bf <- fromString <$> many (oneOf ".,<>+-[]")
+      bfchars <- fromString <$> many (oneOf ".,<>+-[]")
       spaces
-      return (var, bf)
+      return (var, bfchars)
 
 instance Lift BfChar where
   lift BfDot = [|BfDot|]
@@ -33,7 +32,7 @@ instance Lift BfChar where
   lift BfStartLoop = [|BfStartLoop|]
   lift BfEndLoop = [|BfEndLoop|]
   lift BfInc = [|BfInc|]
-  lift a = [|BfDec|]
+  lift BfDec = [|BfDec|]
 
 bfe :: QuasiQuoter
 bfe = QuasiQuoter { quoteExp = \s -> let result = [ [|$(dyn "atPos") $(dyn p) $ $(dyn "write") $ S.fromList bfR|] | (p, bfR) <- parseBfDSL s]

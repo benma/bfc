@@ -3,10 +3,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 
 import Parser(parseString)
-import CodeGenerator(compile, optimizeOutput)
-import BFS(bf, parseBfDSL)
-import BfIR(BfChar(..), toString)
-import qualified Data.Sequence as S
+import CodeGenerator(compile)
 
 import Control.Applicative((<$>))
 

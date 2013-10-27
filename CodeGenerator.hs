@@ -80,7 +80,7 @@ optimizeOutput = flip evalState initialEvalState . go S.empty
         case s of
           BfMoveLeft -> currentPos += 1
           BfMoveRight -> currentPos -= 1
-          _ -> return ()
+          _ -> return()
         go ss xs
     go stack (stripPrefix [bf|[-]|] -> Just xs) = do
       cp <- use currentPos
@@ -105,6 +105,7 @@ optimizeOutput = flip evalState initialEvalState . go S.empty
         BfDec -> occupy
         _ -> return ()
       go (stack |> x) xs
+    go _ _ = error "impossible"
     stripPrefix cs xs = let (left, right) = S.splitAt (S.length cs) xs
                         in if left == cs then Just right else Nothing    
     stripPostfix cs xs = let (left, right) = S.splitAt (S.length xs - S.length cs) xs
@@ -121,7 +122,7 @@ getTapeAccess = F.foldMap go
 compileBfIR :: (F.Foldable t) => t BfIR -> BfS
 compileBfIR l = execWriter $ F.for_ l eval
   where
-    eval (AtPos pos@(PositionRefOffset _ offset size) l') = atPos (getPos pos) $ write l'
+    eval (AtPos pos l') = atPos (getPos pos) $ write l'
     atPos pos s = move pos >> s >> move (-pos)
     move (Position pos) = if pos < 0
                           then replicateM_ (-pos) $ write [bf|<|]
