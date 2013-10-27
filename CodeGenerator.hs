@@ -1,14 +1,15 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module CodeGenerator (compile) where
+module CodeGenerator (compile, optimizeOutput) where
 
 import TapeAllocation(TapeAccessSequence(..), findAllocation)
 import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
 
 import BFS(bf)
-import BfIR(AtPos(..), BfIR(..), BfS)
+import BfIR(BfChar(..), BfIR(..), BfS)
 
 import ShortBytes(ShortByteParams)
 import Parser(AST(..), Op(..), parseString)
@@ -26,6 +27,7 @@ import Data.Char(ord)
 import Data.String.Utils(replace)
 
 import qualified Data.Sequence as S
+import Data.Sequence(ViewR(..), ViewL(..))
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 
@@ -57,47 +59,69 @@ makeLenses ''MemInfo
 
 data Alignment = LeftAligned | RightAligned
 
+
+data OptimizeState = OptimizeState { _currentPos :: Position
+                                   , _occupied :: Set.HashSet Position
+                                   , _loopLevel :: Int
+                                   }
+makeLenses ''OptimizeState
+
+
+optimizeOutput :: BfS -> BfS
+optimizeOutput = flip evalState initialEvalState . go S.empty
+  where
+    initialEvalState = OptimizeState (Position 0) Set.empty 0
+    go stack (S.null -> True) = return stack
+    -- [-][-] => [-]
+    go stack@(stripPostfix [bf|[-]|] -> Just _) (stripPrefix [bf|[-]|] -> Just xs) = go stack xs
+    -- remove all balanced <> and >< and -+ and +-
+    go (S.viewr -> ss :> s) (S.viewl -> x :< xs)
+      | any (\(l,r) -> (s == l && x == r)) [(BfMoveLeft, BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = do
+        case s of
+          BfMoveLeft -> currentPos += 1
+          BfMoveRight -> currentPos -= 1
+          _ -> return ()
+        go ss xs
+    go stack (stripPrefix [bf|[-]|] -> Just xs) = do
+      cp <- use currentPos
+      loopLevel' <- use loopLevel
+      isOccupied <- uses occupied (Set.member cp)
+      if isOccupied || loopLevel' > 0
+        then do occupied %= Set.delete cp
+                go (stack <> [bf|[-]|]) xs
+        else go stack xs
+    go stack (S.viewl -> x :< xs) = do
+      cp <- use currentPos
+      let occupy = occupied %= Set.insert cp
+      case x of
+        BfStartLoop -> loopLevel += 1
+        BfEndLoop -> do
+          -- by definition, the cell is zero after the loop has finished
+          occupied %= Set.delete cp
+          loopLevel -= 1
+        BfMoveRight -> currentPos += 1
+        BfMoveLeft -> currentPos -= 1
+        BfInc -> occupy
+        BfDec -> occupy
+        _ -> return ()
+      go (stack |> x) xs
+    stripPrefix cs xs = let (left, right) = S.splitAt (S.length cs) xs
+                        in if left == cs then Just right else Nothing    
+    stripPostfix cs xs = let (left, right) = S.splitAt (S.length xs - S.length cs) xs
+                         in if right == cs then Just left else Nothing
+
 getTapeAccess :: (F.Foldable t) => t BfIR -> S.Seq (TapeAccessSequence PositionRef)
 getTapeAccess = F.foldMap go
   where
     go (AtPos (PositionRefOffset pos' _ size) ls) = (S.singleton $ Access pos' size) <> (F.foldMap go' ls)
-    go _ = S.empty
-    go' AtPosStartLoop = S.singleton StartLoop
-    go' AtPosEndLoop = S.singleton EndLoop
+    go' BfStartLoop = S.singleton StartLoop
+    go' BfEndLoop = S.singleton EndLoop
     go' _ = S.empty
 
-data BfIRState = BfIRState { _occupied :: Set.HashSet Position,
-                             _loopLevel :: Int
-                           }
-makeLenses ''BfIRState
-
 compileBfIR :: (F.Foldable t) => t BfIR -> BfS
-compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
+compileBfIR l = execWriter $ F.for_ l eval
   where
-    initialState = BfIRState Set.empty 0
-    eval (Write s) = write' s
-    eval (AtPos pos@(PositionRefOffset _ offset size) l') = do
-      let p = getPos pos
-      F.for_ l' $ \el -> case el of
-        AtPosStartLoop -> do
-          atPos p $ write [bf|[|]
-          loopLevel += 1
-        AtPosEndLoop -> do
-          atPos p $ write [bf|]|]
-          -- by definition, the cell is zero after the loop has finished
-          occupied %= Set.delete p
-          loopLevel -= 1
-        AtPosWrite s -> do
-          if offset == 0
-            then forM_ [0..size] $ \i -> occupied %= Set.insert (p + fromIntegral i)
-            else occupied %= Set.insert p
-          atPos p $ write' s
-        AtPosErase -> do
-          isOccupied <- uses occupied (Set.member p)
-          loopLevel' <- use loopLevel
-          when (isOccupied || loopLevel' > 0) $ do
-            atPos p $ write [bf|[-]|]
-            occupied %= Set.delete p
+    eval (AtPos pos@(PositionRefOffset _ offset size) l') = atPos (getPos pos) $ write l'
     atPos pos s = move pos >> s >> move (-pos)
     move (Position pos) = if pos < 0
                           then replicateM_ (-pos) $ write [bf|<|]
@@ -105,11 +129,10 @@ compileBfIR l = execWriter . flip evalStateT initialState $ F.for_ l eval
     allocation = findAllocation $ getTapeAccess l
     getPos :: PositionRefOffset -> Position
     getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + fromIntegral offset
-    write = lift . tell
-    write' = lift . tell
+    write = tell
 
 compile :: [ShortByteParams] -> AST -> BfS
-compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEvalState . evalAST
+compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip evalStateT initialEvalState . evalAST
   where
     initialEvalState :: EvalState
     initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
@@ -505,13 +528,12 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
     convertToBool expr dstPos = do
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
-    tellAtPos = tell. S.singleton
-    write = tellAtPos . AtPosWrite
+    write = tell
     atPos pos f = tell' $ AtPos pos $ execWriter f
     loopByte pos f = do
-      atPos pos $ tellAtPos AtPosStartLoop
+      atPos pos $ write [bf|[|]
       _ <- f
-      atPos pos $ tellAtPos AtPosEndLoop
+      atPos pos $ write [bf|]|]
     move pos = if pos < 0
                then replicateM_ (-pos) $ write [bf|<|]
                else replicateM_ pos $ write [bf|>|]
@@ -519,7 +541,7 @@ compile shortByteParams' = compileBfIR . execWriter . flip evalStateT initialEva
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
-    erase pos = atPos pos $ tellAtPos AtPosErase
+    erase pos = atPos pos $ write [bf|[-]|]
     resize alignment pos newSize = do
       oldSize <- getSize pos
       type_ <- getType pos

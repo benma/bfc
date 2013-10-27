@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-module BfIR(BfChar(..), BfS, AtPos(..), BfIR(..), toString, fromString) where
+module BfIR(BfChar(..), BfS, BfIR(..), toString, fromString) where
 
 import Types(PositionRefOffset(..))
 import Data.Data(Typeable, Data)
@@ -22,12 +22,7 @@ data BfChar = BfDot
 
 type BfS = S.Seq BfChar
 
-data AtPos = AtPosWrite BfS
-           | AtPosErase
-           | AtPosStartLoop 
-           | AtPosEndLoop
-data BfIR = Write BfS
-          | AtPos PositionRefOffset (S.Seq AtPos)
+data BfIR = AtPos PositionRefOffset BfS
 
 
 charToBfS :: Char -> Maybe BfChar
