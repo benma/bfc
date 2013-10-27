@@ -5,8 +5,7 @@ import Types(PositionRefOffset(..))
 import Data.Data(Typeable, Data)
 import qualified Data.Foldable as F
 import qualified Data.Sequence as S
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy.Char8 as BLC
 import Control.Applicative(pure)
 import Data.Maybe(fromJust)
 
@@ -47,8 +46,8 @@ bfsToChar BfStartLoop = '['
 bfsToChar BfEndLoop = ']' 
 
 
-toString :: (F.Foldable t) => t BfChar -> BS.ByteString
-toString = BC.pack . F.foldMap (pure . bfsToChar)
+toString :: (F.Foldable t) => t BfChar -> BLC.ByteString
+toString = BLC.pack . F.foldMap (pure . bfsToChar)
 
 fromString :: String -> [BfChar]
 --fromString = F.foldMap (S.singleton . fromJust . charToBfS)

@@ -8,14 +8,14 @@ import BfIR(toString)
 
 import Control.Applicative((<$>))
 
-import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy.Char8 as BLC
 
 import ShortBytes(getCachedShortByteParams)
 
 main :: IO ()
 main = do
   shortByteParams <- getCachedShortByteParams
-  (toString . compile shortByteParams . parseString) <$> getContents >>= BC.putStrLn
+  (toString . compile shortByteParams . parseString) <$> getContents >>= BLC.putStrLn
 
 -- main = print $ optimizeOutput [bf|[++<--++>---+-][-]|]
 -- main :: IO ()

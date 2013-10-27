@@ -125,8 +125,8 @@ compileBfIR l = execWriter $ F.for_ l eval
     eval (AtPos pos l') = atPos (getPos pos) $ write l'
     atPos pos s = move pos >> s >> move (-pos)
     move (Position pos) = if pos < 0
-                          then replicateM_ (-pos) $ write [bf|<|]
-                          else replicateM_ pos $ write [bf|>|]
+                          then write $ S.replicate (-pos) BfMoveLeft
+                          else write $ S.replicate pos BfMoveRight
     allocation = findAllocation $ getTapeAccess l
     getPos :: PositionRefOffset -> Position
     getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + fromIntegral offset
@@ -140,7 +140,6 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
                        where shortByteParamsArray = Array.array (0, 255) $ zip [0..] shortByteParams'
 
     skip = return ()
-
     evalAST :: AST -> StateT EvalState (Writer (S.Seq BfIR)) ()
     evalAST (AProgram is) = mapM_ evalAST is
     evalAST (AExpression expr) = evalExpression expr >> skip
@@ -536,8 +535,8 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
       _ <- f
       atPos pos $ write [bf|]|]
     move pos = if pos < 0
-               then replicateM_ (-pos) $ write [bf|<|]
-               else replicateM_ pos $ write [bf|>|]
+               then write $ S.replicate (-pos) BfMoveLeft
+               else write $ S.replicate pos BfMoveRight
     writeMove 1 srcPos dstPos = do
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
@@ -585,7 +584,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
     copyByte' = writeCopy' 1
     inc = write [bf|+|]
     dec = write [bf|-|]
-    addByte b = replicateM_ (fromIntegral b) inc
+    addByte b = write $ S.replicate (fromIntegral b) BfInc
     -- dstPos will contain result
     writeOrByte dstPos srcPos = do
       let setOne = atPos dstPos $ writeByte (1::Word8)

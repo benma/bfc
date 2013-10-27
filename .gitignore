@@ -1,2 +1,7 @@
-cabal-dev/
-dist/
+/cabal-dev/
+/cabal-dev.prof/
+/dist/
+/*.hp
+/*.aux
+/iQuotes/
+/kell/
