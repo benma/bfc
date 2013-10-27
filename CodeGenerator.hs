@@ -18,16 +18,16 @@ import Data.Digits(digits)
 import Control.Exception(assert)
 import Control.Applicative((<$>))
 import Control.Monad
-import Control.Monad.Writer.Strict
-import Control.Monad.State.Strict
+import Control.Monad.Writer.Lazy
+import Control.Monad.State.Lazy
 
 import Control.Lens
 import Data.Char(ord)
 
 import Data.String.Utils(replace)
 
+import qualified Data.DList as D
 import qualified Data.Sequence as S
-import Data.Sequence(ViewR(..), ViewL(..))
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 
@@ -68,29 +68,29 @@ makeLenses ''OptimizeState
 
 
 optimizeOutput :: BfS -> BfS
-optimizeOutput = flip evalState initialEvalState . go S.empty
+optimizeOutput = flip evalState initialEvalState . go []
   where
     initialEvalState = OptimizeState (Position 0) Set.empty 0
-    go stack (S.null -> True) = return stack
+    go stack [] = return (reverse stack)
     -- [-][-] => [-]
-    go stack@(stripPostfix [bf|[-]|] -> Just _) (stripPrefix [bf|[-]|] -> Just xs) = go stack xs
+    go stack@(BfEndLoop:BfDec:BfStartLoop:_) (BfStartLoop:BfDec:BfEndLoop:xs) = go stack xs
     -- remove all balanced <> and >< and -+ and +-
-    go (S.viewr -> ss :> s) (S.viewl -> x :< xs)
-      | any (\(l,r) -> (s == l && x == r)) [(BfMoveLeft, BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = do
+    go (s:ss) (x:xs)
+      | any (\(l,r) -> (s == l && x == r)) [(BfMoveLeft,BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = do
         case s of
           BfMoveLeft -> currentPos += 1
           BfMoveRight -> currentPos -= 1
           _ -> return()
         go ss xs
-    go stack (stripPrefix [bf|[-]|] -> Just xs) = do
+    go stack (BfStartLoop:BfDec:BfEndLoop:xs) = do
       cp <- use currentPos
       loopLevel' <- use loopLevel
       isOccupied <- uses occupied (Set.member cp)
       if isOccupied || loopLevel' > 0
         then do occupied %= Set.delete cp
-                go (stack <> [bf|[-]|]) xs
+                go (BfEndLoop:BfDec:BfStartLoop:stack) xs
         else go stack xs
-    go stack (S.viewl -> x :< xs) = do
+    go stack (x:xs) = do
       cp <- use currentPos
       let occupy = occupied %= Set.insert cp
       case x of
@@ -104,12 +104,7 @@ optimizeOutput = flip evalState initialEvalState . go S.empty
         BfInc -> occupy
         BfDec -> occupy
         _ -> return ()
-      go (stack |> x) xs
-    go _ _ = error "impossible"
-    stripPrefix cs xs = let (left, right) = S.splitAt (S.length cs) xs
-                        in if left == cs then Just right else Nothing    
-    stripPostfix cs xs = let (left, right) = S.splitAt (S.length xs - S.length cs) xs
-                         in if right == cs then Just left else Nothing
+      go (x:stack) xs
 
 getTapeAccess :: (F.Foldable t) => t BfIR -> S.Seq (TapeAccessSequence PositionRef)
 getTapeAccess = F.foldMap go
@@ -120,13 +115,13 @@ getTapeAccess = F.foldMap go
     go' _ = S.empty
 
 compileBfIR :: (F.Foldable t) => t BfIR -> BfS
-compileBfIR l = execWriter $ F.for_ l eval
+compileBfIR l = D.toList $ execWriter $ F.for_ l eval
   where
-    eval (AtPos pos l') = atPos (getPos pos) $ write l'
+    eval (AtPos pos l') = atPos (getPos pos) $ write (D.fromList $ l')
     atPos pos s = move pos >> s >> move (-pos)
     move (Position pos) = if pos < 0
-                          then write $ S.replicate (-pos) BfMoveLeft
-                          else write $ S.replicate pos BfMoveRight
+                          then replicateM_ (-pos) $ write $ D.singleton BfMoveLeft
+                          else replicateM_ pos $ write $ D.singleton BfMoveRight
     allocation = findAllocation $ getTapeAccess l
     getPos :: PositionRefOffset -> Position
     getPos (PositionRefOffset pos' offset _) = let Just p' = Map.lookup pos' allocation in p' + fromIntegral offset
@@ -137,8 +132,8 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
   where
     initialEvalState :: EvalState
     initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
-                       where shortByteParamsArray = Array.array (0, 255) $ zip [0..] shortByteParams'
-
+      where shortByteParamsArray = Array.array (0, 255) $ zip [0..] shortByteParams'
+    
     skip = return ()
     evalAST :: AST -> StateT EvalState (Writer (S.Seq BfIR)) ()
     evalAST (AProgram is) = mapM_ evalAST is
@@ -528,15 +523,15 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
     convertToBool expr dstPos = do
       (Just pos) <- evalExpression expr
       writeToBool pos dstPos
-    write = tell
-    atPos pos f = tell' $ AtPos pos $ execWriter f
+    write = tell . D.fromList
+    atPos pos f = tell' $ AtPos pos $ D.toList $ execWriter f
     loopByte pos f = do
       atPos pos $ write [bf|[|]
       _ <- f
       atPos pos $ write [bf|]|]
     move pos = if pos < 0
-               then write $ S.replicate (-pos) BfMoveLeft
-               else write $ S.replicate pos BfMoveRight
+               then replicateM_ (-pos) $ write [BfMoveLeft]
+               else replicateM_ pos $ write [BfMoveRight]
     writeMove 1 srcPos dstPos = do
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
@@ -584,7 +579,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
     copyByte' = writeCopy' 1
     inc = write [bf|+|]
     dec = write [bf|-|]
-    addByte b = write $ S.replicate (fromIntegral b) BfInc
+    addByte b = replicateM_ (fromIntegral b) $ write [BfInc]
     -- dstPos will contain result
     writeOrByte dstPos srcPos = do
       let setOne = atPos dstPos $ writeByte (1::Word8)

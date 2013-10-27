@@ -15,7 +15,7 @@ Executable bfc
   -- needed for `make install-prof`, not sure why.
   Extensions: TemplateHaskell
   Build-depends:       base,
-                       bytestring,
+                       bytestring, dlist, 
                        template-haskell,
                        MissingH,
                        containers,

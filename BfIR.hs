@@ -4,9 +4,7 @@ module BfIR(BfChar(..), BfS, BfIR(..), toString, fromString) where
 import Types(PositionRefOffset(..))
 import Data.Data(Typeable, Data)
 import qualified Data.Foldable as F
-import qualified Data.Sequence as S
 import qualified Data.ByteString.Lazy.Char8 as BLC
-import Control.Applicative(pure)
 import Data.Maybe(fromJust)
 
 data BfChar = BfDot
@@ -19,7 +17,7 @@ data BfChar = BfDot
             | BfEndLoop
             deriving (Eq, Show, Typeable, Data)
 
-type BfS = S.Seq BfChar
+type BfS = [BfChar]
 
 data BfIR = AtPos PositionRefOffset BfS
 
@@ -47,8 +45,7 @@ bfsToChar BfEndLoop = ']'
 
 
 toString :: (F.Foldable t) => t BfChar -> BLC.ByteString
-toString = BLC.pack . F.foldMap (pure . bfsToChar)
+toString = F.foldMap (BLC.singleton . bfsToChar)
 
-fromString :: String -> [BfChar]
---fromString = F.foldMap (S.singleton . fromJust . charToBfS)
+fromString :: String -> BfS
 fromString = map (fromJust . charToBfS)

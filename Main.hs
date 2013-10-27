@@ -17,6 +17,6 @@ main = do
   shortByteParams <- getCachedShortByteParams
   (toString . compile shortByteParams . parseString) <$> getContents >>= BLC.putStrLn
 
--- main = print $ optimizeOutput [bf|[++<--++>---+-][-]|]
+--main = print $ length $ optimizeOutput (replicate 100000000 $ BfDot) 
 -- main :: IO ()
 -- main = (show . parseString) <$> getContents >>= putStrLn
