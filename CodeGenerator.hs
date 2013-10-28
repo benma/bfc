@@ -25,7 +25,6 @@ import Data.Char(ord)
 import Data.String.Utils(replace)
 
 import qualified Data.DList as D
-import qualified Data.Sequence as S
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 
@@ -104,13 +103,13 @@ optimizeOutput = flip evalState initialEvalState . go []
         _ -> return ()
       go (x:stack) xs
 
-getTapeAccess :: (F.Foldable t) => t BfIR -> S.Seq (TapeAccessSequence PositionRef)
-getTapeAccess = F.foldMap go
+getTapeAccess :: (F.Foldable t) => t BfIR -> [TapeAccessSequence PositionRef]
+getTapeAccess = D.toList . F.foldMap go
   where
-    go (AtPos (PositionRefOffset pos' _ size) ls) = (S.singleton $ Access pos' size) <> (F.foldMap go' ls)
-    go' BfStartLoop = S.singleton StartLoop
-    go' BfEndLoop = S.singleton EndLoop
-    go' _ = S.empty
+    go (AtPos (PositionRefOffset pos' _ size) ls) = (D.singleton $ Access pos' size) <> (F.foldMap go' ls)
+    go' BfStartLoop = D.singleton StartLoop
+    go' BfEndLoop = D.singleton EndLoop
+    go' _ = D.empty
 
 compileBfIR :: (F.Foldable t) => t BfIR -> BfS
 compileBfIR l = D.toList $ execWriter $ F.for_ l eval
@@ -126,14 +125,14 @@ compileBfIR l = D.toList $ execWriter $ F.for_ l eval
     write = tell
 
 compile :: [ShortByteParams] -> AST -> BfS
-compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip evalStateT initialEvalState . evalAST
+compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter . flip evalStateT initialEvalState . evalAST
   where
     initialEvalState :: EvalState
     initialEvalState = EvalState Map.empty Map.empty (makePositionRef 0) Map.empty shortByteParamsArray
       where shortByteParamsArray = Array.array (0, 255) $ zip [0..] shortByteParams'
     
     skip = return ()
-    evalAST :: AST -> StateT EvalState (Writer (S.Seq BfIR)) ()
+    evalAST :: AST -> StateT EvalState (Writer (D.DList BfIR)) ()
     evalAST (AProgram is) = mapM_ evalAST is
     evalAST (AExpression expr) = evalExpression expr >> skip
     evalAST (APrint (AExpression (AVariable varName))) = do
@@ -702,4 +701,4 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
         writeByteShort b = if b < 128
                            then replicateM_ (fromIntegral b) inc
                            else replicateM_ (fromIntegral (256-b)) dec
-    tell' = lift . tell . S.singleton
+    tell' = lift . tell . D.singleton

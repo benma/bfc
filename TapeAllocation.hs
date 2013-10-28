@@ -8,7 +8,7 @@ import qualified Data.HashSet as Set
 import Data.Hashable(Hashable)
 
 import Data.List((\\))
-import qualified Data.Sequence as S
+import qualified Data.DList as D
 import qualified Data.Foldable as F
 
 import Control.Monad.Tardis
@@ -27,8 +27,8 @@ data AnnotateEndState a = AnnotateEndState { _loopLevel :: Int
              
 makeLenses ''AnnotateEndState
 
-annotateEnd :: (Eq a, Hashable a) => S.Seq (TapeAccessSequence a) -> S.Seq (TapeAccessSequenceNoLoops a)
-annotateEnd xs = flip evalTardis initialTardis . execWriterT . flip evalStateT initialState $ go
+annotateEnd :: (Eq a, Hashable a, F.Foldable t) => t (TapeAccessSequence a) -> [TapeAccessSequenceNoLoops a]
+annotateEnd xs = D.toList . flip evalTardis initialTardis . execWriterT . flip evalStateT initialState $ go
   where
     initialTardis = (Set.empty, ())
     initialState = AnnotateEndState 0 Map.empty Map.empty
@@ -40,7 +40,7 @@ annotateEnd xs = flip evalTardis initialTardis . execWriterT . flip evalStateT i
                       ; lingering' ^! at loopLevel' . _Just . folded . act tellEnd
                       ; lingering %= Map.delete loopLevel'
                       }
-        Access v size -> do { tell' $ S.singleton (Start' v size)
+        Access v size -> do { tell' $ D.singleton (Start' v size)
                             ; liftTardis $ modifyBackwards (Set.insert v)
                             ; loopLevel' <- use loopLevel
                             ; firstOccurrences %= Map.insertWith (const id) v loopLevel'
@@ -53,9 +53,9 @@ annotateEnd xs = flip evalTardis initialTardis . execWriterT . flip evalStateT i
         tell' = lift . tell
         liftTardis = lift . lift
         tellEnd a = do isLastOccurrence <- liftTardis $ getsFuture (not . Set.member a)
-                       tell' $ if isLastOccurrence then S.singleton (End' a) else mempty
+                       tell' $ if isLastOccurrence then D.singleton (End' a) else mempty
 
-findAllocation :: (Hashable a, Eq a) => S.Seq (TapeAccessSequence a) -> Allocation a
+findAllocation :: (Hashable a, Eq a, F.Foldable t) => t (TapeAccessSequence a) -> Allocation a
 findAllocation tapeAccessSequence = findAllocation' (F.toList $ annotateEnd tapeAccessSequence) Map.empty Map.empty
   where
     findAllocation' [] allocation _ = allocation
