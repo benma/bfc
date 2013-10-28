@@ -2,10 +2,9 @@
 {-# LANGUAGE QuasiQuotes #-}
 module BFS(parseBfDSL, bf, bfe) where
 
-import BfIR(BfChar(..), BfS, fromString)
+import BfIR(BfS, fromString)
 import qualified Data.Foldable as F
 import Language.Haskell.TH
-import Language.Haskell.TH.Syntax
 import Language.Haskell.TH.Quote
 import Text.ParserCombinators.Parsec
 import Control.Applicative((<$>))
@@ -22,16 +21,6 @@ parseBfDSL = either (error . show) id . parse p ""
       bfchars <- fromString <$> many (oneOf ".,<>+-[]")
       spaces
       return (var, bfchars)
-
-instance Lift BfChar where
-  lift BfDot = [|BfDot|]
-  lift BfComma = [|BfComma|]
-  lift BfMoveLeft = [|BfMoveLeft|]
-  lift BfMoveRight = [|BfMoveRight|]
-  lift BfStartLoop = [|BfStartLoop|]
-  lift BfEndLoop = [|BfEndLoop|]
-  lift BfInc = [|BfInc|]
-  lift BfDec = [|BfDec|]
 
 bfe :: QuasiQuoter
 bfe = QuasiQuoter { quoteExp = \s -> let result = [ [|$(dyn "atPos") $(dyn p) $ $(dyn "write") $ bfR|] | (p, bfR) <- parseBfDSL s]

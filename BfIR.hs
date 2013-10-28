@@ -1,5 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 module BfIR(BfChar(..), BfS, BfIR(..), toString, fromString) where
+
+import Language.Haskell.TH.Syntax(Lift(..))
 
 import Types(PositionRefOffset(..))
 import Data.Data(Typeable, Data)
@@ -16,6 +19,16 @@ data BfChar = BfDot
             | BfStartLoop
             | BfEndLoop
             deriving (Eq, Show, Typeable, Data)
+
+instance Lift BfChar where
+  lift BfDot = [|BfDot|]
+  lift BfComma = [|BfComma|]
+  lift BfMoveLeft = [|BfMoveLeft|]
+  lift BfMoveRight = [|BfMoveRight|]
+  lift BfStartLoop = [|BfStartLoop|]
+  lift BfEndLoop = [|BfEndLoop|]
+  lift BfInc = [|BfInc|]
+  lift BfDec = [|BfDec|]
 
 type BfS = [BfChar]
 

@@ -1,7 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE QuasiQuotes #-}
-
 import Parser(parseString)
 import CodeGenerator(compile)
 import BfIR(toString)

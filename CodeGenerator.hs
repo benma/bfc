@@ -1,7 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module CodeGenerator (compile, optimizeOutput) where
 
@@ -117,7 +115,7 @@ getTapeAccess = F.foldMap go
 compileBfIR :: (F.Foldable t) => t BfIR -> BfS
 compileBfIR l = D.toList $ execWriter $ F.for_ l eval
   where
-    eval (AtPos pos l') = atPos (getPos pos) $ write (D.fromList $ l')
+    eval (AtPos pos l') = atPos (getPos pos) $ write $ D.fromList l'
     atPos pos s = move pos >> s >> move (-pos)
     move (Position pos) = if pos < 0
                           then replicateM_ (-pos) $ write $ D.singleton BfMoveLeft
@@ -579,7 +577,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . execWriter . flip eval
     copyByte' = writeCopy' 1
     inc = write [bf|+|]
     dec = write [bf|-|]
-    addByte b = replicateM_ (fromIntegral b) $ write [BfInc]
+    addByte b = replicateM_ (fromIntegral b) inc
     -- dstPos will contain result
     writeOrByte dstPos srcPos = do
       let setOne = atPos dstPos $ writeByte (1::Word8)
