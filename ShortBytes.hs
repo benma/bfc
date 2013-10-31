@@ -1,13 +1,17 @@
-module ShortBytes(ShortByteParams, getCachedShortByteParams) where
+module ShortBytes
+       (
+         ShortByteParams
+       , getCachedShortByteParams
+       ) where
 
 import qualified Data.Binary as Bin
-import System.IO(stderr, hPutStrLn)
-import System.Directory(doesFileExist)
-import Control.Monad(guard, when)
-import Control.Applicative((<$>))
-import Data.Ord(comparing)
-import Data.List(minimumBy)
-import Math.NumberTheory.Moduli(invertMod)
+import System.IO (stderr, hPutStrLn)
+import System.Directory (doesFileExist)
+import Control.Monad (guard, when)
+import Control.Applicative ((<$>))
+import Data.Ord (comparing)
+import Data.List (minimumBy)
+import Math.NumberTheory.Moduli (invertMod)
 import qualified Data.ByteString.Lazy as BL
 
 type ShortByteParams = (Int, Int, Int, Int, Int)

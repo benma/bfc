@@ -1,6 +1,6 @@
-import Parser(parseString)
-import CodeGenerator(compile)
-import BfIR(toString)
+import Parser (parseString)
+import CodeGenerator (compile)
+import BfIR (toString)
 
 import Control.Applicative((<$>))
 

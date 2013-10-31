@@ -1,19 +1,25 @@
 {-# LANGUAGE TemplateHaskell #-}
-module TapeAllocation(TapeAccessSequence(..), Allocation, findAllocation) where
+module TapeAllocation
+       (
+         TapeAccessSequence(..)
+       , Allocation
+       , findAllocation
+       ) where
+
 import Control.Lens
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Strict
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
-import Data.Hashable(Hashable)
+import Data.Hashable (Hashable)
 
-import Data.List((\\))
+import Data.List ((\\))
 import qualified Data.DList as D
 import qualified Data.Foldable as F
 
 import Control.Monad.Tardis
 
-import Types(Size, Position(..))
+import Types (Size, Position(..))
 
 data TapeAccessSequence a = Access a Size | StartLoop | EndLoop
 data TapeAccessSequenceNoLoops a = Start' a Size | End' a

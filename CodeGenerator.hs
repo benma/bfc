@@ -1,28 +1,32 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE QuasiQuotes #-}
 
-module CodeGenerator (compile, optimizeOutput) where
+module CodeGenerator
+       (
+         compile
+       , optimizeOutput
+       ) where
 
-import TapeAllocation(TapeAccessSequence(..), findAllocation)
-import Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
+import TapeAllocation (TapeAccessSequence(..), findAllocation)
+import Types (PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
 
-import BFS(bf)
-import BfIR(BfChar(..), BfIR(..), BfS)
+import BFS (bf)
+import BfIR (BfChar(..), BfIR(..), BfS)
 
-import ShortBytes(ShortByteParams)
-import Parser(AST(..), Op(..), parseString)
-import Data.Word(Word8)
-import Data.Digits(digits)
-import Control.Exception(assert)
-import Control.Applicative((<$>))
+import ShortBytes (ShortByteParams)
+import Parser (AST(..), Op(..), parseString)
+import Data.Word (Word8)
+import Data.Digits (digits)
+import Control.Exception (assert)
+import Control.Applicative ((<$>))
 import Control.Monad
 import Control.Monad.Writer.Lazy
 import Control.Monad.State.Lazy
 
 import Control.Lens
-import Data.Char(ord)
+import Data.Char (ord)
 
-import Data.String.Utils(replace)
+import Data.String.Utils (replace)
 
 import qualified Data.DList as D
 import qualified Data.HashMap.Strict as Map
@@ -106,7 +110,7 @@ optimizeOutput = flip evalState initialEvalState . go []
 getTapeAccess :: (F.Foldable t) => t BfIR -> [TapeAccessSequence PositionRef]
 getTapeAccess = D.toList . F.foldMap go
   where
-    go (AtPos (PositionRefOffset pos' _ size) ls) = (D.singleton $ Access pos' size) <> (F.foldMap go' ls)
+    go (AtPos (PositionRefOffset pos' _ size) ls) = D.singleton (Access pos' size) <> F.foldMap go' ls
     go' BfStartLoop = D.singleton StartLoop
     go' BfEndLoop = D.singleton EndLoop
     go' _ = D.empty
@@ -533,7 +537,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
     writeMove _ _ _ = undefined
-    erase pos = atPos pos $ write [bf|[-]|]
+    erase pos = atPos pos $ writeByte (0::Word8)
     resize alignment pos newSize = do
       oldSize <- getSize pos
       type_ <- getType pos

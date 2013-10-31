@@ -1,14 +1,19 @@
 {-# LANGUAGE DeriveDataTypeable #-}
-module Parser (AST(..), Op(..), parseString) where
+module Parser
+       (
+         AST(..)
+       , Op(..)
+       , parseString
+       ) where
 
 import qualified Data.Data as Data
 
 import qualified Control.Lens as L
 import Data.Data.Lens (uniplate)
-import Text.ParserCombinators.Parsec hiding((<|>))
+import Text.ParserCombinators.Parsec hiding ((<|>))
 import Text.ParserCombinators.Parsec.Expr
 import qualified Text.ParserCombinators.Parsec.Token as P
-import Text.ParserCombinators.Parsec.Language(emptyDef, identLetter)
+import Text.ParserCombinators.Parsec.Language (emptyDef, identLetter)
 
 import Control.Monad
 import Control.Applicative

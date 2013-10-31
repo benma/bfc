@@ -1,8 +1,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE QuasiQuotes #-}
-module BFS(parseBfDSL, bf, bfe) where
+module BFS
+       (
+         parseBfDSL
+       , bf
+       , bfe
+       ) where
 
-import BfIR(BfS, fromString)
+import BfIR (BfS, fromString)
 import qualified Data.Foldable as F
 import Language.Haskell.TH
 import Language.Haskell.TH.Quote

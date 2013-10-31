@@ -1,14 +1,21 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-module BfIR(BfChar(..), BfS, BfIR(..), toString, fromString) where
+module BfIR
+       (
+         BfChar(..)
+       , BfS
+       , BfIR(..)
+       , toString
+       , fromString
+       ) where
 
-import Language.Haskell.TH.Syntax(Lift(..))
+import Language.Haskell.TH.Syntax (Lift(..))
 
-import Types(PositionRefOffset(..))
-import Data.Data(Typeable, Data)
+import Types (PositionRefOffset(..))
+import Data.Data (Typeable, Data)
 import qualified Data.Foldable as F
 import qualified Data.ByteString.Lazy.Char8 as BLC
-import Data.Maybe(fromJust)
+import Data.Maybe (fromJust)
 
 data BfChar = BfDot
             | BfComma

@@ -1,6 +1,14 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module Types(PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Position(..), Size) where
+module Types
+       (
+         PositionRef(..)
+       , makePositionRef
+       , PositionRefOffset(..)
+       , (+:)
+       , Position(..)
+       , Size
+       ) where
 
 import qualified Data.Data as Data
 
