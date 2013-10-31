@@ -77,7 +77,7 @@ optimizeOutput = flip evalState initialEvalState . go []
     go stack@(BfEndLoop:BfDec:BfStartLoop:_) (BfStartLoop:BfDec:BfEndLoop:xs) = go stack xs
     -- remove all balanced <> and >< and -+ and +-
     go (s:ss) (x:xs)
-      | any (\(l,r) -> (s == l && x == r)) [(BfMoveLeft,BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = do
+      | any (==(s,x)) [(BfMoveLeft,BfMoveRight),(BfMoveRight,BfMoveLeft),(BfInc,BfDec),(BfDec,BfInc)] = do
         case s of
           BfMoveLeft -> currentPos += 1
           BfMoveRight -> currentPos -= 1
