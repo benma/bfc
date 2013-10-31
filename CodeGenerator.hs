@@ -182,7 +182,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
       return $ Just pos
     evalExpression (ADefCall "ord" [AExpression (AString (c:[]))]) = do
       ret <- mallocT (Just TInteger) 1
-      atPos ret $ addByte $ fromEnum $ c
+      addByteShort Nothing ret (fromEnum c)
       return $ Just ret
     -- evalExpression (ADefCall "trace" [AExpression (AString s)]) = do
     --   tell' . Write $ toBfS' $ BC.pack s
@@ -314,7 +314,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
 
     evalExpression (ABool b) = do
       pos <- mallocBool
-      when b $ atPos pos $ addByte (1::Word8)
+      when b $ addByteShort Nothing pos (1::Word8)
       return $ Just pos
     evalExpression (AInfixOp OpPlus (AExpression (AInteger left)) (AExpression (AInteger right))) = evalExpression $ AInteger (left+right) -- constant folding
     evalExpression (AInfixOp OpPlusEq (AExpression (AVariable varName)) expr) = do
@@ -531,8 +531,8 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
       _ <- f
       atPos pos $ write [bf|]|]
     move pos = if pos < 0
-               then replicateM_ (-pos) $ write [BfMoveLeft]
-               else replicateM_ pos $ write [BfMoveRight]
+               then replicateM_ (-pos) $ write [bf|<|]
+               else replicateM_ pos $ write [bf|>|]
     writeMove 1 srcPos dstPos = do
       erase dstPos
       loopByte srcPos $ atPos dstPos inc >> atPos srcPos dec
@@ -600,7 +600,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
                 forM_ [0..s-1] $ \i -> writeOrByte dstPos (pos+:i)
     writeNotByte pos = do
       tmp <- mallocByte
-      atPos tmp $ addByte (1::Word8)
+      addByteShort Nothing tmp (1::Word8)
       writeIfByte pos (atPos tmp dec) Nothing
       return tmp
 
@@ -617,7 +617,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
     writeIfByte' False pos ifPart Nothing = loopByte pos $ ifPart >> erase pos
     writeIfByte' False pos ifPart (Just elsePart) = do
       tmp2 <- mallocByte
-      atPos tmp2 $ addByte (1::Word8)
+      addByteShort Nothing tmp2 (1::Word8)
       loopByte pos $ ifPart >> erase pos >> atPos tmp2 dec
       loopByte tmp2 $ elsePart >> atPos tmp2 dec
 
