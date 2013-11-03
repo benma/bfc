@@ -16,8 +16,7 @@ Executable bfc
   Extensions: TemplateHaskell
   Build-depends:       base,
                        bytestring, dlist, 
-                       template-haskell,
-                       MissingH,
+                       template-haskell, syb,
                        containers,
                        unordered-containers,
                        parsec,

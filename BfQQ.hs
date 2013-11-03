@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE QuasiQuotes #-}
-module BFS
+module BfQQ
        (
          parseBfDSL
        , bf

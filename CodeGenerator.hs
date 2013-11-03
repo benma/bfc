@@ -10,11 +10,12 @@ module CodeGenerator
 import TapeAllocation (TapeAccessSequence(..), findAllocation)
 import Types (PositionRef(..), makePositionRef, PositionRefOffset(..), (+:), Size, Position(..))
 
-import BFS (bf)
+import BfQQ (bf)
+import ParserQQ(ast)
 import BfIR (BfChar(..), BfIR(..), BfS)
 
 import ShortBytes (ShortByteParams)
-import Parser (AST(..), Op(..), parseString)
+import Parser (AST(..), Op(..))
 import Data.Word (Word8)
 import Data.Digits (digits)
 import Control.Exception (assert)
@@ -25,8 +26,6 @@ import Control.Monad.State.Lazy
 
 import Control.Lens
 import Data.Char (ord)
-
-import Data.String.Utils (replace)
 
 import qualified Data.DList as D
 import qualified Data.HashMap.Strict as Map
@@ -164,8 +163,8 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
       loopByte cond $ do
         forM_ is evalAST
         convertToBool expr cond
-    evalAST ast@(ADef defName _ _) = do
-      defMap %= Map.insert defName (replaceVars ast)
+    evalAST ast_@(ADef defName _ _) = do
+      defMap %= Map.insert defName (replaceVars ast_)
         where replaceVars = transform (\ast' -> case ast' of 
                                           AVariable varName -> AVariable $ rename varName
                                           ADef defName' params is -> ADef defName' (map rename params) is
@@ -359,8 +358,7 @@ compile shortByteParams' = optimizeOutput . compileBfIR . D.toList . execWriter 
           let newSize = max s1 s2 + 1
           ret <- mallocT (Just TInteger) newSize
           assert (_offset pos1 == 0 && _offset pos2 == 0 && _offset ret == 0) skip
-          -- hack
-          evalAST $ parseString $ F.foldr (uncurry replace) "while(${_l}) { ${_ret} += ${_r} ${_l}-- }" $ [("_l", show $ _position' $ _position pos1), ("_r", show $ _position' $ _position pos2), ("_ret", show $ _position' $ _position ret)]
+          evalAST [ast| while($pos1) { $ret += $pos2 $pos1-- } |]
           return $ Just ret
         _ -> error "not supported"
     evalExpression (APostfixOp OpDec (AExpression (AVariable varName))) = do

@@ -44,6 +44,7 @@ data Op = OpPlus
 type VarName = String
 data AST = AProgram [AST]
          | AVariable VarName
+         | AMetaVariable VarName
          | APosRef PositionRef
          | AExpression AST
          | AInteger Integer
@@ -59,6 +60,9 @@ data AST = AProgram [AST]
          | ADef VarName [VarName] [AST]
          | ADefCall VarName [AST] -- defname, [AExpr]
          deriving (Show, Data.Typeable, Data.Data)
+
+-- instance Lift AST where
+--   lift _ = error "HU"
 
 instance L.Plated AST where
   plate = uniplate
@@ -85,8 +89,9 @@ parseString = either (error . show) id . parse init' ""
                     postfixOp (op, opr) = Postfix (reservedOp op *> pure (\a -> AExpression $ APostfixOp opr a))
                     prefixOp (op, opr) = Prefix (reservedOp op *> pure (\a -> AExpression $ APrefixOp opr a))
             factor = simple_expression <|> _parens expression
-    simple_expression = AExpression <$> choice [try defCall <|> variable, posref, integer, bool, stringLiteral]
+    simple_expression = AExpression <$> choice [try defCall <|> variable, try posref <|> metaVariable, integer, bool, stringLiteral]
     variable = AVariable <$> _identifier
+    metaVariable = AMetaVariable <$> (string "$" *> _identifier)
     posref = (APosRef . makePositionRef . fromIntegral) <$> (string "$" *> _braces _decimal)
     integer = AInteger <$> _integer
     bool = ABool <$> choice [reserved "true" *> return True, reserved "false" *> return False]
