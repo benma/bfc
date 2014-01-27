@@ -2,8 +2,8 @@
 
 bfc is a toy compiler written in Haskell that compiles to Brainfuck. The source language is a simple ad-hoc language. It performs some optimizations to reduce the size of the output. It is a work in progress, so far it supports:
 
-* Variables referencing strings, bools, or unsigned integers of arbitrary size
-* Operators: =, +, -, *, +=, -=, ++, --, >, >=, <, <=, ==, !=, &&, ||
+* variables referencing strings, bools, or unsigned integers of arbitrary size
+* operators: =, +, -, *, +=, -=, ++, --, >, >=, <, <=, ==, !=, &&, ||
 * if/else/while control flow
 * functions
 * arrays with dynamic indices. So far only elements with size of 1 byte are supported.
