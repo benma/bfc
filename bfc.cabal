@@ -12,6 +12,7 @@ Cabal-version:       >=1.2
 
 Executable bfc
   Main-is:             Main.hs
+  hs-source-dirs:      src
   -- needed for `make install-prof`, not sure why.
   Extensions: TemplateHaskell
   Build-depends:       base,
